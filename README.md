@@ -1,14 +1,15 @@
 # MCP Learning Project
 
-A hands-on project to learn **Model Context Protocol (MCP)** by building a custom MCP server with tools and an AI agent that uses them.
+A hands-on project to learn **Model Context Protocol (MCP)** by building a custom MCP server,
+an AI agent, and a full-stack web application with semantic document search.
 
 ---
 
 ## What is MCP?
 
-**Model Context Protocol (MCP)** is an open standard that lets AI models (like Claude) call external tools and services in a structured, language-agnostic way. Instead of hard-coding tool logic inside your AI app, you define tools in a separate **MCP server** — and any MCP-compatible AI agent can discover and use them.
-
-Think of it like a USB standard: any device that speaks USB works with any port. MCP is that standard for AI tools.
+**Model Context Protocol (MCP)** is an open standard that lets AI models (like Claude) call external
+tools and services in a structured, language-agnostic way. Think of it like USB — any tool built
+to the MCP standard works with any MCP-compatible AI.
 
 ---
 
@@ -16,9 +17,18 @@ Think of it like a USB standard: any device that speaks USB works with any port.
 
 ```
 MCP Project/
-├── mcp_server.py    — The MCP server (defines and runs your tools)
-├── agent.py         — The AI agent (connects Claude to your tools)
-└── requirements.txt — Python dependencies
+├── api.py                  — FastAPI web server (primary entry point)
+├── agent.py                — CLI agent (original learning version)
+├── mcp_server.py           — MCP server with 8 tools
+├── database.py             — SQLite layer (notes + sessions)
+├── rag.py                  — ChromaDB semantic search
+├── convert_pdfs.py         — Tesseract OCR for scanned PDFs
+├── inspect_db.py           — Utility to view SQLite contents
+├── templates/
+│   └── chat.html           — Browser chat UI
+├── docs/                   — Drop your documents here
+├── LEARNING_JOURNEY.md     — Full phase-by-phase learning record
+└── requirements.txt
 ```
 
 ---
@@ -26,58 +36,35 @@ MCP Project/
 ## Architecture
 
 ```
-You
- │  type a question
- ▼
-agent.py
- │  1. Sends your message + tool schemas → Claude API
- ▼
-Claude (claude-sonnet-4-6)
- │  2. Decides which tool to call, returns tool_use block
- ▼
-tool_runner  (inside agent.py)
- │  3. Intercepts the tool call, forwards to MCP server
- ▼
-mcp_server.py  (subprocess, stdio transport)
- │  4. Executes the tool function, returns result
- ▼
-tool_runner
- │  5. Feeds result back to Claude
- ▼
-Claude
- │  6. Writes final answer using the tool result
- ▼
-You see the answer
+Browser (http://localhost:8000)
+  │
+  │ HTTP / Server-Sent Events
+  ▼
+api.py (FastAPI)
+  │
+  ├──► Claude Sonnet 4.6 (Anthropic API)
+  │         │ tool calls
+  │         ▼
+  └──► mcp_server.py (8 MCP Tools)
+            ├──► database.py  → SQLite (notes + sessions persist across restarts)
+            ├──► rag.py       → ChromaDB (semantic document search)
+            └──► docs/        → your documents (txt, md, PDF)
 ```
-
-**Key insight:** Claude never runs your code directly. It returns a JSON description of what tool to call with what inputs. Your `agent.py` is the one that actually executes the tool via the MCP server and feeds the results back to Claude.
 
 ---
 
-## Tools
+## All 8 Tools
 
-| Tool | Description | Parameters |
-|---|---|---|
-| `get_current_datetime` | Returns current date and time | None |
-| `calculate` | Safely evaluates a math expression | `expression` (string) |
-| `get_weather` | Mock weather data for a city | `city` (string) |
-| `manage_notes` | In-memory CRUD for text notes | `action`, `title`, `content` |
-
-### Tool descriptions matter
-The `description` field in each tool definition is what Claude reads to decide **when** to use a tool. A good description says *when* to call it, not just *what* it does.
-
-```python
-# ❌ Weak description — Claude might not know when to use this
-types.Tool(name="calculate", description="Does math")
-
-# ✅ Strong description — Claude knows exactly when to use it
-types.Tool(
-    name="calculate",
-    description="Safely evaluates a mathematical expression. "
-                "Use this for any arithmetic, algebra, or calculations. "
-                "Supports: +, -, *, /, **, sqrt(), sin(), cos(), pi, e"
-)
-```
+| Tool | Description |
+|---|---|
+| `get_current_datetime` | Current date and time |
+| `calculate` | Safe math expression evaluator |
+| `get_weather` | Mock weather data by city |
+| `manage_notes` | Persistent CRUD notes (SQLite) |
+| `list_docs` | Lists files in docs/ folder |
+| `read_doc` | Reads full content of a document |
+| `index_docs` | Indexes docs into ChromaDB for semantic search |
+| `search_docs` | Semantic search — finds relevant chunks for any query |
 
 ---
 
@@ -86,158 +73,89 @@ types.Tool(
 ### Prerequisites
 - Python 3.10+
 - An Anthropic API key ([console.anthropic.com](https://console.anthropic.com))
+- Tesseract OCR (for scanned PDFs): `github.com/UB-Mannheim/tesseract/wiki`
 
 ### Install dependencies
-```bash
-pip install anthropic[mcp] mcp
+```powershell
+pip install anthropic[mcp] mcp pymupdf pytesseract pypdf fastapi "uvicorn[standard]" chromadb sentence-transformers
 ```
 
 ### Set your API key (one-time, permanent)
 ```powershell
-# Windows PowerShell — saves to user environment variables
 [System.Environment]::SetEnvironmentVariable("ANTHROPIC_API_KEY", "sk-ant-...", "User")
 ```
-```bash
-# macOS / Linux — add to ~/.bashrc or ~/.zshrc
-export ANTHROPIC_API_KEY="sk-ant-..."
+
+### Run the web app
+```powershell
+$env:ANTHROPIC_API_KEY = [System.Environment]::GetEnvironmentVariable("ANTHROPIC_API_KEY", "User")
+python -m uvicorn api:app --reload --port 8000
 ```
 
-### Run
-```bash
+Open **`http://localhost:8000`** in your browser.
+
+### Or run the CLI agent
+```powershell
 python agent.py
-```
-`agent.py` automatically starts `mcp_server.py` as a subprocess — you only ever run one file.
-
----
-
-## Example Session
-
-```
-═══════════════════════════════════════════════════════
-  MCP Learning Agent
-  Claude + Custom MCP Tools
-═══════════════════════════════════════════════════════
-
-Starting MCP server...
-Connected! Tools: get_current_datetime, calculate, get_weather, manage_notes
-Ask me anything. Claude will use tools when relevant.
-
-You: What day is it today?
-  [→ get_current_datetime]
-Claude: Today is Monday, June 22, 2026 at 03:45 PM.
-
-You: What is sqrt(256) + 2 to the power of 8?
-  [→ calculate]
-  [→ calculate]
-Claude: sqrt(256) = 16, and 2**8 = 256. So the answer is 16 + 256 = 272.
-
-You: Weather in Tokyo?
-  [→ get_weather]
-Claude: In Tokyo it's currently 27°C / 80°F, humid conditions with 82% humidity.
-
-You: Save a note called "ideas" with content "build more MCP tools"
-  [→ manage_notes]
-Claude: Done! Note "ideas" has been saved.
-
-You: List my notes
-  [→ manage_notes]
-Claude: You have 1 note: "ideas"
 ```
 
 ---
 
 ## How to Add a New Tool
 
-**Step 1 — Declare the tool in `list_tools()` inside `mcp_server.py`:**
+**Step 1 — Declare the tool** in `list_tools()` inside `mcp_server.py`:
 ```python
 types.Tool(
-    name="get_joke",
-    description="Returns a random programming joke. Use when the user wants something funny.",
-    inputSchema={
-        "type": "object",
-        "properties": {},   # no parameters
-    },
+    name="my_tool",
+    description="What it does and WHEN Claude should use it.",
+    inputSchema={"type": "object", "properties": {"param": {"type": "string"}}, "required": ["param"]},
 ),
 ```
 
-**Step 2 — Handle it in `call_tool()` inside `mcp_server.py`:**
+**Step 2 — Handle it** in `call_tool()` inside `mcp_server.py`:
 ```python
-if name == "get_joke":
-    jokes = [
-        "Why do programmers prefer dark mode? Because light attracts bugs.",
-        "A SQL query walks into a bar, walks up to two tables and asks... can I join you?",
-    ]
-    import random
-    return [types.TextContent(type="text", text=random.choice(jokes))]
+if name == "my_tool":
+    result = do_something(arguments["param"])
+    return [types.TextContent(type="text", text=result)]
 ```
 
-That's it. Restart `agent.py` and Claude will automatically discover and use the new tool.
+Restart the server — Claude discovers the new tool automatically.
 
 ---
 
-## Transport: stdio vs HTTP/SSE
+## How to Add Documents
 
-Currently this project uses **stdio transport** — the server runs as a local subprocess. This is great for local development.
+1. Drop `.txt`, `.md`, or `.pdf` files into the `docs/` folder
+2. For scanned PDFs: run `python convert_pdfs.py` first
+3. Restart the server (auto-indexes on startup) or say *"Re-index my documents"* in chat
 
-### stdio (current — local only)
+---
+
+## RAG — How Semantic Search Works
+
 ```
-agent.py  ──stdin/stdout──►  mcp_server.py (subprocess)
+Indexing (once):
+  docs/*.txt → split into ~500 char chunks → embed with all-MiniLM-L6-v2 → store in ChromaDB
+
+Querying (every question):
+  question → embed → ChromaDB similarity search → top 4 relevant chunks → Claude
 ```
 
-### HTTP/SSE (for external access)
-Run the server as a web service. External agents connect via URL.
-```
-any agent  ──HTTP──►  mcp_server running on port 8000
-```
-
-### Ways to expose your server externally
-
-| Method | Best for |
-|---|---|
-| **Claude Desktop config** | Use your tools inside the Claude desktop app |
-| **HTTP/SSE server** | Let agents on other machines connect via URL |
-| **Anthropic `mcp_servers` API param** | Connect directly from any Anthropic API call |
+This handles documents of any size — only the relevant parts are sent to Claude.
 
 ---
 
 ## Key Concepts
 
-| Concept | Where | Purpose |
+| Concept | File | Purpose |
 |---|---|---|
-| `Server("name")` | `mcp_server.py` | Creates the MCP server instance |
-| `@app.list_tools()` | `mcp_server.py` | Declares available tools (name + description + schema) |
-| `@app.call_tool()` | `mcp_server.py` | Executes a tool and returns `TextContent` |
-| `stdio_server()` | `mcp_server.py` | stdio transport — communicates via stdin/stdout |
-| `StdioServerParameters` | `agent.py` | Tells the client how to launch the server subprocess |
-| `ClientSession` | `agent.py` | MCP protocol session handler |
-| `async_mcp_tool()` | `agent.py` | Wraps MCP tools for use with the Anthropic SDK |
-| `tool_runner` | `agent.py` | Automates the full tool-call loop with Claude |
-
----
-
-## How the MCP Protocol Works (under the hood)
-
-`agent.py` and `mcp_server.py` communicate using **JSON-RPC 2.0** messages over stdin/stdout. You never see these messages directly, but here's what they look like:
-
-**Agent asks: "what tools do you have?"**
-```json
-{ "jsonrpc": "2.0", "method": "tools/list", "id": 1 }
-```
-
-**Server replies:**
-```json
-{ "result": { "tools": [ { "name": "calculate", "description": "...", "inputSchema": {...} } ] } }
-```
-
-**Agent asks: "run this tool"**
-```json
-{ "method": "tools/call", "params": { "name": "calculate", "arguments": { "expression": "sqrt(144)" } } }
-```
-
-**Server replies:**
-```json
-{ "result": { "content": [ { "type": "text", "text": "sqrt(144) = 12.0" } ] } }
-```
+| `@app.list_tools()` | `mcp_server.py` | Declares tools to any MCP client |
+| `@app.call_tool()` | `mcp_server.py` | Executes tools and returns results |
+| `lifespan` | `api.py` | Keeps MCP server alive across all HTTP requests |
+| `StreamingResponse` | `api.py` | SSE streaming to the browser |
+| `init_db()` | `database.py` | Creates SQLite tables on startup |
+| `index_all()` | `rag.py` | Chunks + embeds all docs into ChromaDB |
+| `search()` | `rag.py` | Semantic similarity search |
+| `async_mcp_tool()` | `agent.py` / `api.py` | Bridges MCP tools to Anthropic SDK |
 
 ---
 
@@ -245,15 +163,29 @@ any agent  ──HTTP──►  mcp_server running on port 8000
 
 | Package | Purpose |
 |---|---|
-| `anthropic[mcp]` | Anthropic SDK + MCP integration helpers |
-| `mcp` | MCP server/client library (Python reference implementation) |
+| `anthropic[mcp]` | Anthropic SDK + MCP integration |
+| `mcp` | MCP protocol implementation |
+| `fastapi` | Web framework |
+| `uvicorn[standard]` | ASGI web server |
+| `pypdf` | Text-based PDF extraction |
+| `pymupdf` | PDF → image rendering for OCR |
+| `pytesseract` | Tesseract OCR wrapper |
+| `chromadb` | Vector database |
+| `sentence-transformers` | Local embedding model |
+
+---
+
+## GitHub
+
+`github.com/vijayanan6/mcp-project`
 
 ---
 
 ## Next Steps
 
-- **Add real tools** — replace mock weather with a real API (OpenWeatherMap, etc.)
-- **Add a database tool** — connect to SQLite and let Claude query it
-- **Expose via HTTP/SSE** — make your server accessible to external agents
-- **Add to Claude Desktop** — use your tools directly in the Claude app
-- **Add authentication** — secure your HTTP server with API keys
+- Replace mock weather with real OpenWeatherMap API
+- Add user authentication (JWT tokens)
+- Switch SQLite → PostgreSQL
+- Deploy to cloud (Railway / Render)
+- Add React frontend
+- Connect GitHub MCP server
