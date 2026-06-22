@@ -28,6 +28,9 @@ env/
 .idea/
 *.suo
 
+# Database (local only — not committed)
+data.db
+
 # OS
 .DS_Store
 Thumbs.db

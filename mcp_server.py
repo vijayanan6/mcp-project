@@ -8,7 +8,7 @@ It exposes 6 tools that Claude can call:
   • get_current_datetime  — real-time date/time (no params)
   • calculate             — safe math expression evaluator
   • get_weather           — mock weather data by city
-  • manage_notes          — in-memory CRUD for text notes
+  • manage_notes          — SQLite-backed CRUD for text notes (persistent)
 
 How it works:
   1. The server starts and listens on stdin for JSON-RPC messages
@@ -28,6 +28,8 @@ try:
 except ImportError:
     PDF_SUPPORT = False
 
+from database import init_db, note_save, note_get, note_list, note_delete
+
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp import types
@@ -35,8 +37,8 @@ from mcp import types
 # Create the MCP server — the name shows up in logs and debug output
 app = Server("learning-mcp-server")
 
-# In-memory notes store — persists while the server subprocess is alive
-notes: dict = {}
+# Initialize the SQLite database on startup
+init_db()
 
 
 @app.list_tools()
@@ -251,32 +253,32 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
         if action == "save":
             if not title:
                 return [types.TextContent(type="text", text="Error: 'title' is required to save a note.")]
-            notes[title] = {"content": content, "created": datetime.now().isoformat()}
+            note_save(title, content)   # ← saved to SQLite, survives restarts
             return [types.TextContent(type="text", text=f"Note '{title}' saved.")]
 
         if action == "read":
             if not title:
                 return [types.TextContent(type="text", text="Error: 'title' is required to read a note.")]
-            if title not in notes:
+            note = note_get(title)
+            if not note:
                 return [types.TextContent(type="text", text=f"No note found with title '{title}'.")]
-            note = notes[title]
             return [types.TextContent(
                 type="text",
-                text=f"Note: {title}\nCreated: {note['created']}\n\n{note['content']}",
+                text=f"Note: {title}\nCreated: {note['created_at']}\n\n{note['content']}",
             )]
 
         if action == "list":
-            if not notes:
+            titles = note_list()
+            if not titles:
                 return [types.TextContent(type="text", text="No notes saved yet.")]
-            titles = "\n".join(f"  • {t}" for t in sorted(notes))
-            return [types.TextContent(type="text", text=f"Saved notes ({len(notes)}):\n{titles}")]
+            listing = "\n".join(f"  • {t}" for t in titles)
+            return [types.TextContent(type="text", text=f"Saved notes ({len(titles)}):\n{listing}")]
 
         if action == "delete":
             if not title:
                 return [types.TextContent(type="text", text="Error: 'title' is required to delete a note.")]
-            if title not in notes:
+            if not note_delete(title):
                 return [types.TextContent(type="text", text=f"No note found with title '{title}'.")]
-            del notes[title]
             return [types.TextContent(type="text", text=f"Note '{title}' deleted.")]
 
     # ── Tool: list_docs ───────────────────────────────────────────────────

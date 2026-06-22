@@ -28,12 +28,9 @@ from anthropic import AsyncAnthropic
 from anthropic.lib.tools.mcp import async_mcp_tool
 from mcp import ClientSession
 from mcp.client.stdio import StdioServerParameters, stdio_client
+from database import init_db, session_get, session_save, session_list, session_delete
 
 SERVER_SCRIPT = str(Path(__file__).parent / "mcp_server.py")
-
-# In-memory conversation store: session_id → message history
-# Replace with a database (SQLite/PostgreSQL) for persistence
-sessions: dict[str, list[dict]] = {}
 
 
 # ── Lifespan: runs on startup and shutdown ───────────────────────────────────
@@ -63,6 +60,7 @@ async def lifespan(app: FastAPI):
             app.state.tool_names = tool_names
             app.state.client = AsyncAnthropic()
 
+            init_db()  # ensure tables exist
             print(f"MCP server ready. Tools: {tool_names}")
             yield
             # MCP server subprocess is cleaned up automatically here
@@ -97,19 +95,15 @@ async def list_tools():
 
 @app.get("/sessions")
 async def list_sessions():
-    """Return all active session IDs and turn counts."""
-    return {
-        sid: len([m for m in msgs if m["role"] == "user"])
-        for sid, msgs in sessions.items()
-    }
+    """Return all session IDs and last updated time."""
+    return session_list()
 
 
 @app.delete("/session/{session_id}")
 async def clear_session(session_id: str):
     """Clear conversation history for a session."""
-    if session_id not in sessions:
+    if not session_delete(session_id):
         raise HTTPException(status_code=404, detail="Session not found")
-    sessions.pop(session_id)
     return {"cleared": session_id}
 
 
@@ -121,7 +115,7 @@ async def chat(req: ChatRequest):
     Good for testing; use /stream for the real UI.
     """
     session_id = req.session_id or str(uuid.uuid4())
-    history = sessions.setdefault(session_id, [])
+    history = session_get(session_id)
     history.append({"role": "user", "content": req.message})
 
     runner = app.state.client.beta.messages.tool_runner(
@@ -143,6 +137,7 @@ async def chat(req: ChatRequest):
                 response_text += block.text
 
     history.append({"role": "assistant", "content": response_text})
+    session_save(session_id, history)
 
     return {
         "session_id": session_id,
@@ -165,7 +160,7 @@ async def stream_chat(req: ChatRequest):
       { type: "error", message: "..." }         — something went wrong
     """
     session_id = req.session_id or str(uuid.uuid4())
-    history = sessions.setdefault(session_id, [])
+    history = session_get(session_id)
     history.append({"role": "user", "content": req.message})
 
     async def generate():
@@ -188,6 +183,7 @@ async def stream_chat(req: ChatRequest):
                         yield f"data: {json.dumps({'type': 'text', 'content': block.text})}\n\n"
 
             history.append({"role": "assistant", "content": response_text})
+            session_save(session_id, history)   # ← persist to SQLite
             yield f"data: {json.dumps({'type': 'done', 'session_id': session_id})}\n\n"
 
         except Exception as e:
