@@ -1,299 +1,268 @@
-# Architecture Documentation
+# Architecture Overview
 
-> This file is structured for AI-assisted diagram generation tools (Eraser.io, Lucidchart AI,
-> Mermaid Live, draw.io AI, GitHub Copilot, etc.).
-> Each section contains both Mermaid syntax diagrams and plain-text descriptions
-> that any copilot tool can use to regenerate or modify diagrams.
+This document describes how the MCP Learning Project is structured,
+how its components connect, and how data flows through the system.
 
 ---
 
-## 1. System Overview Diagram
+## System Overview
 
-```mermaid
-graph TD
-    User["👤 User<br/>(Browser)"]
-    ChatUI["chat.html<br/>Browser Chat UI"]
-    API["api.py<br/>FastAPI Web Server<br/>Port 8000"]
-    Claude["Claude Sonnet 4.6<br/>Anthropic API"]
-    MCP["mcp_server.py<br/>MCP Server<br/>stdio subprocess"]
-    DB["database.py<br/>SQLite<br/>data.db"]
-    RAG["rag.py<br/>ChromaDB<br/>chroma_db/"]
-    DOCS["docs/<br/>txt, md, PDF files"]
-    CLI["agent.py<br/>CLI Agent<br/>(alternative)"]
+The application has three layers — a browser frontend, a FastAPI backend,
+and a collection of MCP tools. The user talks to the browser, the browser
+talks to FastAPI, FastAPI talks to Claude, and Claude calls tools through
+the MCP server.
 
-    User -->|HTTP Request| ChatUI
-    ChatUI -->|POST /stream SSE| API
-    API -->|Anthropic SDK| Claude
-    Claude -->|tool_use blocks| API
-    API -->|stdio JSON-RPC| MCP
-    MCP -->|read/write| DB
-    MCP -->|index/search| RAG
-    RAG -->|read files| DOCS
-    MCP -->|read files| DOCS
-
-    User -.->|terminal input| CLI
-    CLI -.->|stdio JSON-RPC| MCP
+```
+Browser
+  └── chat.html (chat UI)
+        │
+        │ HTTP / Server-Sent Events
+        ▼
+  api.py (FastAPI — port 8000)
+        │
+        ├── Anthropic API (Claude Sonnet 4.6)
+        │         │
+        │         │ tool calls
+        │         ▼
+        └── mcp_server.py (MCP Server — subprocess)
+                  │
+                  ├── database.py  →  data.db (SQLite)
+                  ├── rag.py       →  chroma_db/ (ChromaDB)
+                  └── docs/        →  your documents
 ```
 
+There is also `agent.py` — the original CLI version of the agent. It
+connects to the same `mcp_server.py` but uses the terminal instead of
+a browser. Both interfaces work.
+
 ---
 
-## 2. Request Lifecycle — Sequence Diagram
+## Components
 
-```mermaid
-sequenceDiagram
-    actor User
-    participant Browser as Browser (chat.html)
-    participant API as api.py (FastAPI)
-    participant Claude as Claude Sonnet 4.6
-    participant MCP as mcp_server.py
-    participant ChromaDB as ChromaDB (rag.py)
-    participant SQLite as SQLite (database.py)
+### api.py — Web Server
+The entry point for the web application. Built with FastAPI.
 
-    User->>Browser: types question
-    Browser->>API: POST /stream {message, session_id}
-    API->>SQLite: session_get(session_id)
-    SQLite-->>API: conversation history
-    API->>Claude: messages + 8 tool schemas
-    Claude-->>API: tool_use: search_docs(query)
-    API->>MCP: call_tool("search_docs", {query})
-    MCP->>ChromaDB: search(query, n=4)
-    ChromaDB-->>MCP: top 4 relevant chunks
-    MCP-->>API: TextContent with chunks
-    API->>Claude: tool_result with chunks
-    Claude-->>API: final text response (streamed)
-    API->>SQLite: session_save(session_id, history)
-    API-->>Browser: SSE stream (text chunks)
-    Browser-->>User: response renders in real time
+- Starts `mcp_server.py` as a subprocess on startup and keeps it alive
+- Receives chat messages from the browser via HTTP POST
+- Streams Claude's responses back in real time using Server-Sent Events
+- Stores and retrieves conversation history from SQLite
+- Auto-indexes documents into ChromaDB on startup
+- Exposes endpoints: `/`, `/chat`, `/stream`, `/tools`, `/sessions`
+
+### mcp_server.py — MCP Server
+The tool engine. Has no knowledge of Claude, HTTP, or the browser.
+It simply defines tools and executes them when called.
+
+- Communicates with api.py over stdin/stdout using JSON-RPC 2.0
+- Exposes 8 tools (listed below)
+- Notes are stored in SQLite via database.py
+- Document search runs through ChromaDB via rag.py
+
+### database.py — SQLite Layer
+Handles all database operations. Two tables:
+
+- **notes** — stores user-saved notes permanently (title, content, timestamp)
+- **sessions** — stores full chat history per session as a JSON array
+
+Data survives restarts. Before this, everything was stored in Python
+dicts and lost when the app stopped.
+
+### rag.py — Semantic Search
+Handles document indexing and retrieval using ChromaDB.
+
+- Splits documents into ~500 character chunks with 100 character overlap
+- Embeds each chunk using the `all-MiniLM-L6-v2` model (384-dimensional vectors)
+- Stores vectors in ChromaDB on disk
+- On a search query: embeds the question, finds the 4 most similar chunks,
+  returns them with source filename and relevance score
+
+### agent.py — CLI Agent
+The original learning version. Same MCP connection logic as api.py
+but uses a terminal input loop instead of HTTP. Useful for quick testing.
+
+### chat.html — Browser UI
+A single-page chat interface built with vanilla JavaScript.
+
+- Sends messages to `/stream` and reads Server-Sent Events in real time
+- Shows tool call indicators (e.g. `→ search_docs`) as Claude uses tools
+- Persists session ID in browser localStorage across page reloads
+
+### convert_pdfs.py — PDF Converter
+Standalone script for converting scanned PDFs to readable text.
+
+- Uses pymupdf to render each PDF page as a high-resolution image
+- Runs Tesseract OCR on each image to extract text
+- Saves a `.txt` file alongside the original PDF
+- Run manually after adding new scanned PDFs to docs/
+
+### inspect_db.py — Database Viewer
+Utility script that prints the contents of SQLite (notes and sessions).
+Useful for debugging or verifying what's stored.
+
+---
+
+## The 8 MCP Tools
+
+| Tool | What it does | Where data lives |
+|---|---|---|
+| `get_current_datetime` | Returns current date and time | — |
+| `calculate` | Evaluates a math expression safely | — |
+| `get_weather` | Returns mock weather for a city | — |
+| `manage_notes` | Save, read, list, delete notes | SQLite |
+| `list_docs` | Lists all files in docs/ folder | Filesystem |
+| `read_doc` | Reads the full content of a file | Filesystem |
+| `index_docs` | Indexes all docs into ChromaDB | ChromaDB |
+| `search_docs` | Semantic search across indexed docs | ChromaDB |
+
+---
+
+## How a Question Gets Answered
+
+Here is the step-by-step flow when a user asks a question in the browser:
+
+1. User types a question and presses Send
+2. Browser sends `POST /stream` to api.py with the message and session ID
+3. api.py loads the conversation history for that session from SQLite
+4. api.py sends the history plus all 8 tool schemas to Claude
+5. Claude reads the system prompt: *"always call search_docs first"*
+6. Claude calls `search_docs` with the question as the query
+7. api.py forwards the tool call to mcp_server.py via stdin/stdout
+8. mcp_server.py calls rag.py, which searches ChromaDB
+9. ChromaDB returns the 4 most relevant document chunks
+10. The result is sent back to Claude
+11. Claude writes a final answer based on the retrieved chunks
+12. api.py streams the response back to the browser in real time
+13. The browser renders each text chunk as it arrives
+14. api.py saves the updated conversation to SQLite
+
+---
+
+## How RAG Works
+
+RAG (Retrieval Augmented Generation) allows Claude to answer questions
+from large documents without reading them entirely.
+
+**Indexing phase** (runs on startup):
+```
+docs/*.txt and *.md
+  → split into ~500 char chunks
+  → each chunk embedded into a 384-number vector
+  → stored in ChromaDB with {filename, chunk number}
 ```
 
----
-
-## 3. MCP Tool Architecture
-
-```mermaid
-graph LR
-    subgraph MCP_Server["mcp_server.py — MCP Server"]
-        LT["list_tools()<br/>tool discovery"]
-        CT["call_tool()<br/>tool execution"]
-
-        subgraph Tools["8 Tools"]
-            T1["get_current_datetime"]
-            T2["calculate"]
-            T3["get_weather"]
-            T4["manage_notes"]
-            T5["list_docs"]
-            T6["read_doc"]
-            T7["index_docs"]
-            T8["search_docs"]
-        end
-    end
-
-    T4 -->|CRUD| SQLite["SQLite<br/>database.py"]
-    T7 -->|chunk + embed| ChromaDB["ChromaDB<br/>rag.py"]
-    T8 -->|semantic search| ChromaDB
-    T5 -->|list files| Docs["docs/ folder"]
-    T6 -->|read file| Docs
-    T7 -->|read files| Docs
+**Query phase** (every question):
+```
+user question
+  → embedded into a 384-number vector
+  → compared against all stored vectors
+  → top 4 closest chunks returned
+  → sent to Claude as context
 ```
 
+This means a 50-page document becomes searchable. Claude only
+sees the 4 paragraphs most relevant to the question, not the whole file.
+
 ---
 
-## 4. Data Persistence Architecture
+## Data Storage
 
-```mermaid
-graph TD
-    subgraph SQLite["SQLite — data.db"]
-        Notes["notes table<br/>─────────────────<br/>title TEXT PK<br/>content TEXT<br/>created_at TEXT"]
-        Sessions["sessions table<br/>─────────────────<br/>session_id TEXT PK<br/>messages TEXT (JSON)<br/>created_at TEXT<br/>updated_at TEXT"]
-    end
+### SQLite (data.db)
+Local file database. Created automatically on first run.
 
-    subgraph ChromaDB["ChromaDB — chroma_db/"]
-        Collection["docs collection<br/>─────────────────<br/>id: filename::chunk::N<br/>document: chunk text<br/>embedding: float[384]<br/>metadata: source, chunk_index"]
-    end
+```
+notes table
+  title       — note name (primary key)
+  content     — note text
+  created_at  — timestamp
 
-    manage_notes -->|read/write| Notes
-    api_sessions -->|read/write| Sessions
-    index_docs -->|write embeddings| Collection
-    search_docs -->|query vectors| Collection
+sessions table
+  session_id  — unique conversation ID (primary key)
+  messages    — full chat history stored as JSON
+  created_at  — when session started
+  updated_at  — last message time
 ```
 
----
+### ChromaDB (chroma_db/)
+Local vector database folder. Created automatically on first run.
 
-## 5. RAG Pipeline Diagram
-
-```mermaid
-flowchart LR
-    subgraph Indexing["Indexing Phase (on startup)"]
-        direction TB
-        Files["docs/*.txt<br/>docs/*.md"] --> Chunker
-        Chunker["Text Chunker<br/>500 chars<br/>100 char overlap"] --> Embedder
-        Embedder["Sentence Transformer<br/>all-MiniLM-L6-v2<br/>384-dim vectors"] --> VectorDB
-        VectorDB["ChromaDB<br/>Persistent Storage"]
-    end
-
-    subgraph Query["Query Phase (per question)"]
-        direction TB
-        Question["User Question"] --> QEmbed
-        QEmbed["Embed Question<br/>→ 384-dim vector"] --> Search
-        Search["Similarity Search<br/>cosine distance"] --> TopK
-        TopK["Top 4 Chunks<br/>with source + score"] --> Claude2
-        Claude2["Claude Sonnet 4.6<br/>answers from chunks"]
-    end
-
-    VectorDB -.->|stored vectors| Search
+```
+docs collection
+  id         — "filename::chunk::0", "filename::chunk::1", etc.
+  document   — the actual text chunk
+  embedding  — 384-dimensional float vector
+  metadata   — {source: "filename.txt", chunk_index: 0}
 ```
 
+Both `data.db` and `chroma_db/` are excluded from Git (in `.gitignore`).
+They are local only and rebuilt automatically when the app starts.
+
 ---
 
-## 6. File Structure Map
+## PDF Processing Flow
 
-```mermaid
-graph TD
-    Root["MCP Project/"]
+Scanned PDFs (images of pages, no text layer) require a separate
+conversion step before the agent can read them.
 
-    Root --> api["api.py<br/>FastAPI server<br/>routes + SSE + lifespan"]
-    Root --> agent["agent.py<br/>CLI agent<br/>terminal interface"]
-    Root --> mcp["mcp_server.py<br/>MCP server<br/>8 tool definitions"]
-    Root --> db["database.py<br/>SQLite helpers<br/>notes + sessions CRUD"]
-    Root --> rag["rag.py<br/>ChromaDB helpers<br/>chunk + embed + search"]
-    Root --> conv["convert_pdfs.py<br/>Tesseract OCR<br/>scanned PDF → txt"]
-    Root --> inspect["inspect_db.py<br/>DB utility<br/>view SQLite contents"]
-
-    Root --> templates["templates/"]
-    templates --> html["chat.html<br/>browser UI<br/>SSE streaming"]
-
-    Root --> docs["docs/"]
-    docs --> txt[".txt files"]
-    docs --> md[".md files"]
-    docs --> pdf[".pdf files"]
-
-    Root --> data["data.db<br/>SQLite database<br/>(gitignored)"]
-    Root --> chroma["chroma_db/<br/>ChromaDB vectors<br/>(gitignored)"]
+```
+scanned PDF in docs/
+  → python convert_pdfs.py
+  → pymupdf renders each page at 300 DPI → PNG image
+  → pytesseract runs Tesseract OCR on each image
+  → extracted text saved as filename.txt in docs/
+  → restart app → txt file gets indexed automatically
 ```
 
+Text-based PDFs (PDFs with an actual text layer) are read directly
+by `read_doc` using pypdf — no conversion needed.
+
 ---
 
-## 7. Technology Stack Map
+## Technology Stack
 
-```mermaid
-graph LR
-    subgraph Frontend
-        HTML["chat.html<br/>Vanilla JS + CSS<br/>SSE EventSource"]
-    end
+| Layer | Technology | Why |
+|---|---|---|
+| AI Model | Claude Sonnet 4.6 | Fast, capable, supports tool use |
+| AI SDK | anthropic[mcp] | Official SDK + MCP bridge |
+| Tool Protocol | MCP (Model Context Protocol) | Standard for AI tools |
+| Web Framework | FastAPI | Modern async Python web framework |
+| Web Server | Uvicorn | ASGI server for FastAPI |
+| Database | SQLite | Built into Python, zero setup |
+| Vector Database | ChromaDB | Local vector store, no server needed |
+| Embeddings | sentence-transformers | Local ML model, no API cost |
+| PDF (text) | pypdf | Lightweight PDF text extraction |
+| PDF (scanned) | pymupdf + Tesseract | Render pages → OCR → text |
+| Version Control | Git + GitHub | Code history and backup |
+| Language | Python 3.12 | Everything |
 
-    subgraph Backend
-        FastAPI["FastAPI<br/>Python 3.12<br/>Async ASGI"]
-        Uvicorn["Uvicorn<br/>ASGI Server"]
-    end
+---
 
-    subgraph AI_Layer
-        AnthropicSDK["Anthropic SDK<br/>anthropic[mcp]"]
-        Claude["Claude Sonnet 4.6<br/>claude-sonnet-4-6"]
-        MCP_Lib["MCP Library<br/>JSON-RPC Protocol"]
-    end
+## File Map
 
-    subgraph Storage
-        SQLiteDB["SQLite<br/>sqlite3 (built-in)"]
-        ChromaDBStore["ChromaDB<br/>Vector Database"]
-        Filesystem["Filesystem<br/>docs/ folder"]
-    end
-
-    subgraph ML
-        SentenceT["sentence-transformers<br/>all-MiniLM-L6-v2<br/>384-dim embeddings"]
-    end
-
-    subgraph PDF_Processing
-        PyPDF["pypdf<br/>text-based PDFs"]
-        PyMuPDF["pymupdf (fitz)<br/>PDF → images"]
-        Tesseract["Tesseract OCR<br/>image → text"]
-    end
-
-    HTML --> FastAPI
-    FastAPI --> AnthropicSDK
-    AnthropicSDK --> Claude
-    AnthropicSDK --> MCP_Lib
-    MCP_Lib --> SQLiteDB
-    MCP_Lib --> ChromaDBStore
-    MCP_Lib --> Filesystem
-    ChromaDBStore --> SentenceT
-    Filesystem --> PyPDF
-    Filesystem --> PyMuPDF
-    PyMuPDF --> Tesseract
 ```
-
----
-
-## Component Descriptions (Plain Text for Copilot Tools)
-
-### api.py
-- Type: FastAPI web server
-- Port: 8000
-- Responsibilities: HTTP routing, SSE streaming, session management, MCP lifecycle
-- Key endpoints: GET /, POST /chat, POST /stream, GET /tools, GET /sessions, DELETE /session/{id}
-- Connections: Browser (HTTP in), Anthropic API (HTTPS out), mcp_server.py (stdio subprocess)
-- On startup: spawns mcp_server.py, initialises SQLite, auto-indexes docs into ChromaDB
-
-### mcp_server.py
-- Type: MCP server (stdio transport)
-- Protocol: JSON-RPC 2.0 over stdin/stdout
-- Responsibilities: tool definitions, tool execution
-- Tools: 8 (get_current_datetime, calculate, get_weather, manage_notes, list_docs, read_doc, index_docs, search_docs)
-- Connections: api.py or agent.py (parent process via stdio), database.py, rag.py, docs/ filesystem
-
-### database.py
-- Type: SQLite abstraction layer
-- File: data.db (project root, gitignored)
-- Tables: notes (title PK, content, created_at), sessions (session_id PK, messages JSON, created_at, updated_at)
-- Used by: mcp_server.py (manage_notes tool), api.py (session persistence)
-
-### rag.py
-- Type: RAG (Retrieval Augmented Generation) module
-- Vector DB: ChromaDB (persistent, chroma_db/ folder, gitignored)
-- Embedding model: sentence-transformers all-MiniLM-L6-v2 (384 dimensions, ~80MB, cached locally)
-- Chunk size: 500 chars with 100 char overlap
-- Collection name: "docs"
-- Used by: mcp_server.py (index_docs and search_docs tools), api.py (auto-index on startup)
-
-### agent.py
-- Type: CLI application
-- Interface: terminal (input/print)
-- Responsibilities: same as api.py but terminal-based, single user, single session
-- Used for: learning, debugging, quick testing
-
-### chat.html
-- Type: Single-page frontend
-- Technology: Vanilla JavaScript, CSS
-- Features: SSE streaming, session persistence via localStorage, tool call indicators
-- Communication: POST /stream → SSE event stream
-
----
-
-## Data Flow Descriptions (Plain Text for Copilot Tools)
-
-### Flow 1: User asks a question (web)
-1. User types in browser → POST /stream to api.py
-2. api.py loads session history from SQLite
-3. api.py calls Claude API with history + 8 tool schemas
-4. Claude returns tool_use block for search_docs
-5. api.py forwards to mcp_server.py via stdio JSON-RPC
-6. mcp_server.py calls rag.py → ChromaDB similarity search
-7. ChromaDB returns top 4 relevant chunks
-8. api.py sends tool_result back to Claude
-9. Claude streams final text response
-10. api.py streams SSE events to browser
-11. api.py saves updated session to SQLite
-
-### Flow 2: Document indexing
-1. api.py startup triggers index_all() in rag.py
-2. rag.py reads all .txt and .md files from docs/
-3. Each file is split into ~500 char chunks with 100 char overlap
-4. Each chunk is embedded using all-MiniLM-L6-v2 → 384-dim float vector
-5. Vectors stored in ChromaDB with metadata {source, chunk_index}
-
-### Flow 3: PDF conversion (manual step)
-1. User drops PDF into docs/ folder
-2. User runs convert_pdfs.py
-3. pymupdf renders each page at 300 DPI → PNG image
-4. pytesseract runs Tesseract OCR on each image → text
-5. Text saved as .txt alongside the original PDF
-6. Server restart triggers auto-indexing of the new .txt file
+MCP Project/
+│
+├── api.py              Web server — FastAPI, routes, SSE, lifespan
+├── agent.py            CLI agent — terminal interface, same MCP logic
+├── mcp_server.py       MCP server — 8 tool definitions and handlers
+├── database.py         SQLite helpers — notes and sessions CRUD
+├── rag.py              ChromaDB helpers — chunk, embed, index, search
+├── convert_pdfs.py     PDF OCR — pymupdf + Tesseract → txt
+├── inspect_db.py       Utility — print SQLite contents
+│
+├── templates/
+│   └── chat.html       Browser chat UI — SSE streaming, session storage
+│
+├── docs/               Drop documents here
+│   ├── *.txt           Plain text files
+│   ├── *.md            Markdown files
+│   └── *.pdf           PDFs (convert scanned ones first)
+│
+├── data.db             SQLite database (auto-created, gitignored)
+├── chroma_db/          ChromaDB vector store (auto-created, gitignored)
+│
+├── CLAUDE.md           Guidance for Claude Code
+├── README.md           Project overview and setup
+├── ARCHITECTURE.md     This file
+├── LEARNING_JOURNEY.md Phase-by-phase learning record
+└── requirements.txt    Python dependencies
+```
