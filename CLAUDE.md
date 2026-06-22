@@ -78,6 +78,32 @@ Both `api.py` and `agent.py` instruct Claude to call `search_docs` first on ever
 
 `rag.py` patches `httpx.Client.__init__` to disable SSL verification before the HuggingFace model download. This is required on Windows machines with corporate certificate chains. The model (~80MB) is cached after first download.
 
+## Git Workflow
+
+See `GIT_COMMANDS.md` for the full reference. Standard workflow:
+
+```powershell
+git checkout -b feature/name     # new feature branch
+git add .
+git commit -m "feat: description"
+git checkout main
+git merge feature/name
+git push origin main
+```
+
+Commit prefix conventions: `feat:` new feature — `docs:` documentation — `fix:` bug fix
+
+## Documentation Files
+
+| File | Purpose |
+|---|---|
+| `README.md` | Project overview and setup |
+| `ARCHITECTURE.md` | System design in plain English |
+| `LEARNING_JOURNEY.md` | Phase-by-phase build record |
+| `INSIGHTS.md` | Key lessons and principles |
+| `TUTORIAL.md` | Beginner teaching guide with exercises |
+| `GIT_COMMANDS.md` | All Git commands used with explanations |
+
 ## Key Dependencies
 
 | Package | Purpose |
