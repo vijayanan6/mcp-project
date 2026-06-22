@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MCP Agent</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      background: #f0f2f5;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* ── Header ── */
+    header {
+      background: #1a1a2e;
+      color: white;
+      padding: 14px 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    header h1 { font-size: 1rem; font-weight: 600; letter-spacing: 0.3px; }
+    #tools-badge {
+      background: rgba(255,255,255,0.1);
+      border-radius: 20px;
+      padding: 4px 14px;
+      font-size: 0.75rem;
+      color: #a0aec0;
+    }
+
+    /* ── Messages ── */
+    #messages {
+      flex: 1;
+      overflow-y: auto;
+      padding: 24px 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+
+    .msg {
+      max-width: 72%;
+      padding: 12px 16px;
+      border-radius: 16px;
+      line-height: 1.6;
+      font-size: 0.95rem;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .msg.user {
+      background: #1a1a2e;
+      color: #fff;
+      align-self: flex-end;
+      border-bottom-right-radius: 4px;
+    }
+    .msg.assistant {
+      background: #fff;
+      color: #1a1a2e;
+      align-self: flex-start;
+      border-bottom-left-radius: 4px;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+    }
+    .tool-tag {
+      align-self: flex-start;
+      background: #eaf4fb;
+      color: #2a7aaa;
+      border-radius: 20px;
+      padding: 5px 14px;
+      font-size: 0.8rem;
+      font-family: monospace;
+    }
+    .typing {
+      align-self: flex-start;
+      color: #999;
+      font-size: 0.85rem;
+      font-style: italic;
+      padding: 4px 0;
+    }
+
+    /* ── New session button ── */
+    #new-session {
+      background: transparent;
+      border: 1px solid rgba(255,255,255,0.25);
+      color: #a0aec0;
+      border-radius: 6px;
+      padding: 4px 12px;
+      font-size: 0.75rem;
+      cursor: pointer;
+    }
+    #new-session:hover { background: rgba(255,255,255,0.1); }
+
+    /* ── Footer / input ── */
+    footer {
+      background: #fff;
+      padding: 14px 16px;
+      border-top: 1px solid #e2e8f0;
+      display: flex;
+      gap: 10px;
+    }
+    #input {
+      flex: 1;
+      padding: 11px 16px;
+      border: 1px solid #d1d5db;
+      border-radius: 10px;
+      font-size: 0.95rem;
+      outline: none;
+      resize: none;
+      height: 44px;
+    }
+    #input:focus { border-color: #1a1a2e; }
+    #send {
+      background: #1a1a2e;
+      color: #fff;
+      border: none;
+      padding: 0 22px;
+      border-radius: 10px;
+      font-size: 0.95rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+    #send:hover { background: #2d2d4e; }
+    #send:disabled { background: #9ca3af; cursor: not-allowed; }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>⚡ MCP Learning Agent</h1>
+  <div style="display:flex;gap:10px;align-items:center">
+    <span id="tools-badge">Loading tools…</span>
+    <button id="new-session" onclick="newSession()">New chat</button>
+  </div>
+</header>
+
+<div id="messages"></div>
+
+<footer>
+  <input id="input" type="text" placeholder="Ask anything…" autocomplete="off" />
+  <button id="send">Send</button>
+</footer>
+
+<script>
+  // ── State ────────────────────────────────────────────────────────────────
+  let sessionId = localStorage.getItem("mcp_session_id") || "";
+  const messagesEl = document.getElementById("messages");
+  const inputEl    = document.getElementById("input");
+  const sendBtn    = document.getElementById("send");
+
+  // ── Load tools ───────────────────────────────────────────────────────────
+  fetch("/tools")
+    .then(r => r.json())
+    .then(data => {
+      document.getElementById("tools-badge").textContent = data.tools.join("  •  ");
+    });
+
+  // Show welcome message
+  addMsg("Hi! I'm your MCP agent. I have tools to check the time, calculate math, " +
+         "get weather, manage notes, and read your docs. Ask me anything!", "assistant");
+
+  // ── Helpers ──────────────────────────────────────────────────────────────
+  function escape(text) {
+    return text.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+  }
+
+  function addMsg(text, role) {
+    const div = document.createElement("div");
+    div.className = `msg ${role}`;
+    div.textContent = text;
+    messagesEl.appendChild(div);
+    scroll();
+    return div;
+  }
+
+  function addToolTag(name) {
+    const div = document.createElement("div");
+    div.className = "tool-tag";
+    div.textContent = `→ ${name}`;
+    messagesEl.appendChild(div);
+    scroll();
+  }
+
+  function scroll() {
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+  }
+
+  function newSession() {
+    sessionId = "";
+    localStorage.removeItem("mcp_session_id");
+    messagesEl.innerHTML = "";
+    addMsg("New conversation started. Ask me anything!", "assistant");
+  }
+
+  // ── Send message ─────────────────────────────────────────────────────────
+  async function send() {
+    const text = inputEl.value.trim();
+    if (!text) return;
+
+    inputEl.value = "";
+    sendBtn.disabled = true;
+    addMsg(text, "user");
+
+    // Typing indicator
+    const typing = document.createElement("div");
+    typing.className = "typing";
+    typing.textContent = "Claude is thinking…";
+    messagesEl.appendChild(typing);
+    scroll();
+
+    let assistantDiv = null;
+    let assistantText = "";
+
+    try {
+      const res = await fetch("/stream", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: text, session_id: sessionId }),
+      });
+
+      const reader  = res.body.getReader();
+      const decoder = new TextDecoder();
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        // Parse SSE lines
+        const raw = decoder.decode(value);
+        for (const line of raw.split("\n")) {
+          if (!line.startsWith("data: ")) continue;
+          let event;
+          try { event = JSON.parse(line.slice(6)); } catch { continue; }
+
+          if (event.type === "tool") {
+            typing.remove();
+            addToolTag(event.name);
+
+          } else if (event.type === "text") {
+            typing.remove();
+            if (!assistantDiv) assistantDiv = addMsg("", "assistant");
+            assistantText += event.content;
+            assistantDiv.textContent = assistantText;
+            scroll();
+
+          } else if (event.type === "done") {
+            typing.remove();
+            sessionId = event.session_id;
+            localStorage.setItem("mcp_session_id", sessionId);
+
+          } else if (event.type === "error") {
+            typing.remove();
+            addMsg("Error: " + event.message, "assistant");
+          }
+        }
+      }
+    } catch (err) {
+      typing.remove();
+      addMsg("Connection error: " + err.message, "assistant");
+    }
+
+    sendBtn.disabled = false;
+    inputEl.focus();
+  }
+
+  sendBtn.addEventListener("click", send);
+  inputEl.addEventListener("keydown", e => {
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
+  });
+</script>
+</body>
+</html>
