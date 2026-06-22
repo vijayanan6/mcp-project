@@ -61,3 +61,5 @@ Place `.txt`, `.md`, or `.pdf` files here for the agent to read. Scanned PDFs mu
 | `pypdf` | Text extraction from text-based PDFs |
 | `pymupdf` | Renders PDF pages to images for OCR |
 | `pytesseract` | Python wrapper for Tesseract OCR |
+
+## Upcoming: SQLite database for persistent storage
