@@ -120,7 +120,10 @@ async def main() -> None:
                     max_tokens=2048,
                     system=(
                         "You are a helpful assistant with access to tools. "
-                        "Use tools when they will give a more accurate or complete answer. "
+                        "IMPORTANT: When answering any question, ALWAYS call list_docs first "
+                        "to check if there are relevant documents available. "
+                        "If a relevant document exists, use read_doc to read it and base your answer on it. "
+                        "Only use your general knowledge or other tools if no relevant document is found. "
                         "Be concise."
                     ),
                     tools=tools,

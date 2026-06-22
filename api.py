@@ -121,7 +121,13 @@ async def chat(req: ChatRequest):
     runner = app.state.client.beta.messages.tool_runner(
         model="claude-sonnet-4-6",
         max_tokens=2048,
-        system="You are a helpful assistant with access to tools. Use them when relevant.",
+        system=(
+                        "You are a helpful assistant with access to tools. "
+                        "IMPORTANT: When answering any question, ALWAYS call list_docs first "
+                        "to check if there are relevant documents available. "
+                        "If a relevant document exists, use read_doc to read it and base your answer on it. "
+                        "Only use your general knowledge or other tools if no relevant document is found."
+                    ),
         tools=app.state.tools,
         messages=history,
     )
@@ -169,7 +175,13 @@ async def stream_chat(req: ChatRequest):
             runner = app.state.client.beta.messages.tool_runner(
                 model="claude-sonnet-4-6",
                 max_tokens=2048,
-                system="You are a helpful assistant with access to tools. Use them when relevant.",
+                system=(
+                        "You are a helpful assistant with access to tools. "
+                        "IMPORTANT: When answering any question, ALWAYS call list_docs first "
+                        "to check if there are relevant documents available. "
+                        "If a relevant document exists, use read_doc to read it and base your answer on it. "
+                        "Only use your general knowledge or other tools if no relevant document is found."
+                    ),
                 tools=app.state.tools,
                 messages=history,
             )
