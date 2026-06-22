@@ -31,6 +31,9 @@ env/
 # Database (local only — not committed)
 data.db
 
+# ChromaDB vector database (local only)
+chroma_db/
+
 # OS
 .DS_Store
 Thumbs.db

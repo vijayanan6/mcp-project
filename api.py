@@ -123,10 +123,11 @@ async def chat(req: ChatRequest):
         max_tokens=2048,
         system=(
                         "You are a helpful assistant with access to tools. "
-                        "IMPORTANT: When answering any question, ALWAYS call list_docs first "
-                        "to check if there are relevant documents available. "
-                        "If a relevant document exists, use read_doc to read it and base your answer on it. "
-                        "Only use your general knowledge or other tools if no relevant document is found."
+                        "IMPORTANT: When answering any question, ALWAYS call search_docs first "
+                        "to check if relevant information exists in the user's documents. "
+                        "Base your answer on the search results if they are relevant. "
+                        "Only fall back to general knowledge if search_docs returns nothing relevant. "
+                        "If documents are not yet indexed, call index_docs first."
                     ),
         tools=app.state.tools,
         messages=history,
@@ -177,10 +178,11 @@ async def stream_chat(req: ChatRequest):
                 max_tokens=2048,
                 system=(
                         "You are a helpful assistant with access to tools. "
-                        "IMPORTANT: When answering any question, ALWAYS call list_docs first "
-                        "to check if there are relevant documents available. "
-                        "If a relevant document exists, use read_doc to read it and base your answer on it. "
-                        "Only use your general knowledge or other tools if no relevant document is found."
+                        "IMPORTANT: When answering any question, ALWAYS call search_docs first "
+                        "to check if relevant information exists in the user's documents. "
+                        "Base your answer on the search results if they are relevant. "
+                        "Only fall back to general knowledge if search_docs returns nothing relevant. "
+                        "If documents are not yet indexed, call index_docs first."
                     ),
                 tools=app.state.tools,
                 messages=history,

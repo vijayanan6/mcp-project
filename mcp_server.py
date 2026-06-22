@@ -29,6 +29,7 @@ except ImportError:
     PDF_SUPPORT = False
 
 from database import init_db, note_save, note_get, note_list, note_delete
+from rag import index_all, search, get_stats
 
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
@@ -137,7 +138,43 @@ async def list_tools() -> list[types.Tool]:
             },
         ),
 
-        # ── Tool 5: List documents ────────────────────────────────────────
+        # ── Tool 5: Index documents into ChromaDB ────────────────────────
+        types.Tool(
+            name="index_docs",
+            description=(
+                "Indexes all documents in the docs/ folder into ChromaDB for semantic search. "
+                "Call this once after adding new documents, or when the user asks to index/update docs. "
+                "Only needs to be called again when new files are added."
+            ),
+            inputSchema={"type": "object", "properties": {}},
+        ),
+
+        # ── Tool 6: Semantic search across indexed documents ──────────────
+        types.Tool(
+            name="search_docs",
+            description=(
+                "Semantically searches all indexed documents and returns the most relevant chunks. "
+                "Use this INSTEAD of read_doc when answering questions about documents — "
+                "it finds only the relevant parts without reading entire files. "
+                "Returns the top matching passages with their source filenames."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "The question or topic to search for",
+                    },
+                    "n_results": {
+                        "type": "integer",
+                        "description": "Number of chunks to return (default 4)",
+                    },
+                },
+                "required": ["query"],
+            },
+        ),
+
+        # ── Tool 7: List documents ────────────────────────────────────────
         types.Tool(
             name="list_docs",
             description=(
@@ -280,6 +317,42 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
             if not note_delete(title):
                 return [types.TextContent(type="text", text=f"No note found with title '{title}'.")]
             return [types.TextContent(type="text", text=f"Note '{title}' deleted.")]
+
+    # ── Tool: index_docs ─────────────────────────────────────────────────
+    if name == "index_docs":
+        results = index_all()
+        if not results:
+            return [types.TextContent(type="text", text="No supported files found in docs/. Add .txt or .md files first.")]
+        lines = "\n".join(f"  • {f}: {c} chunks" for f, c in results.items())
+        stats = get_stats()
+        return [types.TextContent(
+            type="text",
+            text=f"Indexed {len(results)} file(s) into ChromaDB:\n{lines}\n\nTotal: {stats['total_chunks']} chunks ready for search.",
+        )]
+
+    # ── Tool: search_docs ─────────────────────────────────────────────────
+    if name == "search_docs":
+        query = arguments.get("query", "").strip()
+        n = arguments.get("n_results", 4)
+        if not query:
+            return [types.TextContent(type="text", text="Error: 'query' is required.")]
+
+        stats = get_stats()
+        if stats["total_chunks"] == 0:
+            return [types.TextContent(
+                type="text",
+                text="No documents indexed yet. Call index_docs first.",
+            )]
+
+        chunks = search(query, n_results=n)
+        if not chunks:
+            return [types.TextContent(type="text", text="No relevant content found for that query.")]
+
+        parts = []
+        for i, chunk in enumerate(chunks, 1):
+            parts.append(f"[{i}] Source: {chunk['source']} (relevance: {chunk['score']})\n{chunk['content']}")
+
+        return [types.TextContent(type="text", text="\n\n---\n\n".join(parts))]
 
     # ── Tool: list_docs ───────────────────────────────────────────────────
     if name == "list_docs":
