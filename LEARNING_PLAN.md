@@ -21,12 +21,41 @@ Last updated: June 2026
 - [x] GCP concepts — Cloud Run, Cloud SQL, Secret Manager, IAM, VPC (theory)
 
 ### Not Yet Started ❌
+- [ ] MCP Inspector — visual debugger for MCP servers (test tools without a full client)
+- [ ] pytest — testing framework for MCP tools and FastAPI routes
+- [ ] MCP resources & prompts — the two MCP primitives beyond tools
 - [ ] Docker
 - [ ] GCP hands-on deployment
 - [ ] React frontend
 - [ ] PostgreSQL
 - [ ] Authentication (JWT / Firebase)
 - [ ] Advanced AI engineering (Langfuse, LangChain)
+
+---
+
+## Pre-Docker — Foundation Gaps (1–2 Weeks)
+**Goal: Fill the gaps that every production AI engineer is expected to know**
+
+### Testing with pytest
+- [ ] Install pytest and pytest-asyncio (`pip install pytest pytest-asyncio httpx`)
+- [ ] Understand the difference between unit tests and integration tests
+- [ ] Write tests for each MCP tool in `mcp_server.py`
+- [ ] Write async tests for FastAPI routes using `httpx.AsyncClient`
+- [ ] Test edge cases: bad input, missing files, empty notes
+- [ ] Run tests with `pytest -v` and read coverage output
+
+**Success check:** `pytest` passes with tests covering all 8 MCP tools and the main API routes
+
+---
+
+### MCP Resources & Prompts
+- [ ] Understand the 3 MCP primitives: tools (actions), resources (data), prompts (templates)
+- [ ] Add a resource to `mcp_server.py` that exposes the `docs/` folder listing
+- [ ] Add a resource that exposes a single note by URI (e.g. `note://1`)
+- [ ] Add a prompt template for summarising a document
+- [ ] Test resources and prompts via MCP Inspector
+
+**Success check:** MCP Inspector shows tools + resources + prompts all working
 
 ---
 
@@ -170,6 +199,10 @@ Last updated: June 2026
 
 | Topic | Resource |
 |---|---|
+| MCP Inspector | modelcontextprotocol.io/docs/tools/inspector |
+| pytest | docs.pytest.org |
+| pytest-asyncio | pytest-asyncio.readthedocs.io |
+| MCP Resources & Prompts | modelcontextprotocol.io/docs/concepts/resources |
 | Docker | docs.docker.com/get-started |
 | GCP Cloud Run | cloud.google.com/run/docs |
 | GCP CLI | cloud.google.com/sdk/docs/install |
@@ -186,11 +219,12 @@ Last updated: June 2026
 ## Timeline Overview
 
 ```
-Month 1:  Docker + Cloud Run → app live on GCP
-Month 2:  GCP Services → PostgreSQL, GCS, Secret Manager
-Month 3:  React frontend → proper chat UI
-Month 4:  Authentication → multi-user, secure
-Month 5+: Advanced AI → Langfuse, advanced RAG, Vertex AI
+Weeks 1–2: pytest + MCP resources/prompts → solid foundation
+Month 1:   Docker + Cloud Run → app live on GCP
+Month 2:   GCP Services → PostgreSQL, GCS, Secret Manager
+Month 3:   React frontend → proper chat UI
+Month 4:   Authentication → multi-user, secure
+Month 5+:  Advanced AI → Langfuse, advanced RAG, Vertex AI
 ```
 
 ---

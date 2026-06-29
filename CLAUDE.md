@@ -72,11 +72,18 @@ Place `.txt`, `.md`, or `.pdf` files here. Scanned PDFs must be pre-converted vi
 
 ## System Prompt Behaviour
 
-Both `api.py` and `agent.py` instruct Claude to call `search_docs` first on every question before falling back to general knowledge or other tools. This ensures document content always takes priority.
+`api.py` uses a smart system prompt that tells Claude to call `search_docs` first for topic-specific questions (people, projects, subjects) but skip it for clearly general questions (math, weather, time). This avoids unnecessary tool calls while still prioritising document content.
+
+The prompt is defined as `SYSTEM_PROMPT` with `cache_control: ephemeral` so Anthropic caches it across turns — saving ~90% of those input tokens after the first call.
+
+Conversation history is capped at the last **10 messages** (`HISTORY_LIMIT`) to keep context size bounded. Full history is still persisted to SQLite; only the window sent to Claude is trimmed.
 
 ## SSL Note (Windows)
 
-`rag.py` patches `httpx.Client.__init__` to disable SSL verification before the HuggingFace model download. This is required on Windows machines with corporate certificate chains. The model (~80MB) is cached after first download.
+Two SSL patches are applied on Windows machines with corporate certificate chains or network monitoring drivers:
+
+1. **`rag.py`** — patches `httpx.Client.__init__` and `httpx.AsyncClient.__init__` to default `verify=False` before the HuggingFace model download. The model (~80MB) is cached after first download.
+2. **`api.py` lifespan** — clears the `SSLKEYLOGFILE` environment variable (set by monitoring drivers like `nllMonFltProxy`) and passes `httpx.AsyncClient(verify=False)` explicitly to `AsyncAnthropic()` to prevent SSL context creation failures.
 
 ## Git Workflow
 

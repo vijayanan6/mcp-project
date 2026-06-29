@@ -247,7 +247,8 @@ Semantic document search — instead of reading entire files, Claude now finds o
 - **ChromaDB** = vector database that stores embeddings and finds the closest ones to a query
 - **sentence-transformers** = local ML model (`all-MiniLM-L6-v2`, ~80MB) that creates embeddings
 - **Relevance score** — distance from 0 (identical) to 1+ (very different); lower = more relevant
-- Windows SSL issue with `httpx` — fixed by monkey-patching `httpx.Client.__init__`
+- Windows SSL issue with `httpx` — fixed by monkey-patching `httpx.Client.__init__` and `httpx.AsyncClient.__init__` in `rag.py`
+- `SSLKEYLOGFILE` env var set by network monitoring drivers (e.g. `nllMonFltProxy`) crashes Python SSL — fixed by popping it before `AsyncAnthropic()` and passing `httpx.AsyncClient(verify=False)` explicitly
 
 ### RAG vs Old Approach
 ```

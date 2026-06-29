@@ -122,10 +122,10 @@ Here is the step-by-step flow when a user asks a question in the browser:
 
 1. User types a question and presses Send
 2. Browser sends `POST /stream` to api.py with the message and session ID
-3. api.py loads the conversation history for that session from SQLite
-4. api.py sends the history plus all 8 tool schemas to Claude
-5. Claude reads the system prompt: *"always call search_docs first"*
-6. Claude calls `search_docs` with the question as the query
+3. api.py loads the conversation history for that session from SQLite (last 10 messages sent to Claude)
+4. api.py sends the trimmed history plus all 8 tool schemas to Claude
+5. Claude reads the cached system prompt: *"call search_docs for topic-specific questions; skip for clearly general ones"*
+6. Claude decides whether to call `search_docs` based on the question type
 7. api.py forwards the tool call to mcp_server.py via stdin/stdout
 8. mcp_server.py calls rag.py, which searches ChromaDB
 9. ChromaDB returns the 4 most relevant document chunks

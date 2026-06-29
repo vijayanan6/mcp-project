@@ -58,9 +58,27 @@ async def lifespan(app: FastAPI):
             # Store on app.state so all route handlers can access them
             app.state.tools = tools
             app.state.tool_names = tool_names
-            app.state.client = AsyncAnthropic()
+
+            # Windows: SSLKEYLOGFILE may point to a monitoring driver that Python
+            # can't write to. Pop it before creating any SSL context.
+            import os as _os
+            import httpx as _httpx
+            _os.environ.pop("SSLKEYLOGFILE", None)
+            # Pass a custom httpx client with verify=False to avoid the Windows
+            # corporate certificate chain issue when calling the Anthropic API.
+            app.state.client = AsyncAnthropic(
+                http_client=_httpx.AsyncClient(verify=False)
+            )
+            from rag import index_all, get_stats
 
             init_db()  # ensure tables exist
+
+            # Auto-index docs on startup so RAG works immediately
+            indexed = index_all()
+            stats = get_stats()
+            if indexed:
+                print(f"Indexed {len(indexed)} doc(s) -> {stats['total_chunks']} chunks in ChromaDB")
+
             print(f"MCP server ready. Tools: {tool_names}")
             yield
             # MCP server subprocess is cleaned up automatically here
@@ -107,6 +125,26 @@ async def clear_session(session_id: str):
     return {"cleared": session_id}
 
 
+SYSTEM_PROMPT = [
+    {
+        "type": "text",
+        "text": (
+            "You are a helpful assistant with access to tools.\n\n"
+            "For any question about a specific topic, subject, person, or project, "
+            "ALWAYS call search_docs first — the user's documents may contain relevant information. "
+            "Base your answer on those results if relevant.\n\n"
+            "Only skip search_docs for clearly general questions (math, current time, weather, etc.) "
+            "that could not possibly be in a document.\n\n"
+            "If search_docs returns nothing useful, answer from general knowledge. "
+            "If documents are not yet indexed, call index_docs first."
+        ),
+        "cache_control": {"type": "ephemeral"},
+    }
+]
+
+HISTORY_LIMIT = 10  # keep last N messages to cap context size
+
+
 @app.post("/chat")
 async def chat(req: ChatRequest):
     """
@@ -120,17 +158,10 @@ async def chat(req: ChatRequest):
 
     runner = app.state.client.beta.messages.tool_runner(
         model="claude-sonnet-4-6",
-        max_tokens=2048,
-        system=(
-                        "You are a helpful assistant with access to tools. "
-                        "IMPORTANT: When answering any question, ALWAYS call search_docs first "
-                        "to check if relevant information exists in the user's documents. "
-                        "Base your answer on the search results if they are relevant. "
-                        "Only fall back to general knowledge if search_docs returns nothing relevant. "
-                        "If documents are not yet indexed, call index_docs first."
-                    ),
+        max_tokens=1024,
+        system=SYSTEM_PROMPT,
         tools=app.state.tools,
-        messages=history,
+        messages=history[-HISTORY_LIMIT:],
     )
 
     response_text = ""
@@ -175,17 +206,10 @@ async def stream_chat(req: ChatRequest):
         try:
             runner = app.state.client.beta.messages.tool_runner(
                 model="claude-sonnet-4-6",
-                max_tokens=2048,
-                system=(
-                        "You are a helpful assistant with access to tools. "
-                        "IMPORTANT: When answering any question, ALWAYS call search_docs first "
-                        "to check if relevant information exists in the user's documents. "
-                        "Base your answer on the search results if they are relevant. "
-                        "Only fall back to general knowledge if search_docs returns nothing relevant. "
-                        "If documents are not yet indexed, call index_docs first."
-                    ),
+                max_tokens=1024,
+                system=SYSTEM_PROMPT,
                 tools=app.state.tools,
-                messages=history,
+                messages=history[-HISTORY_LIMIT:],
             )
 
             async for msg in runner:
