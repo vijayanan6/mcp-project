@@ -257,12 +257,20 @@
             typing.remove();
             sessionId = event.session_id;
             localStorage.setItem("mcp_session_id", sessionId);
-            if (event.usage) {
-              const u = event.usage;
+            if (event.usage || event.model) {
               const tag = document.createElement("div");
               tag.className = "usage-tag";
-              const cached = u.cache_read > 0 ? ` · ${u.cache_read} cached ✓` : "";
-              tag.textContent = `tokens: ${u.input} in · ${u.output} out${cached}`;
+              const parts = [];
+              if (event.usage) {
+                const u = event.usage;
+                const cached = u.cache_read > 0 ? ` · ${u.cache_read} cached ✓` : "";
+                parts.push(`tokens: ${u.input} in · ${u.output} out${cached}`);
+              }
+              if (event.model) {
+                const shortModel = event.model.includes("haiku") ? "haiku 💚" : "sonnet";
+                parts.push(shortModel);
+              }
+              tag.textContent = parts.join("  ·  ");
               messagesEl.appendChild(tag);
               scroll();
             }

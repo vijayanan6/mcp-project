@@ -144,6 +144,23 @@ SYSTEM_PROMPT = [
 
 HISTORY_LIMIT = 10  # keep last N messages to cap context size
 
+# Keywords that indicate doc/note/complex queries → use Sonnet
+_COMPLEX_SIGNALS = {
+    "doc", "file", "note", "search", "find", "summarize", "summary",
+    "read", "index", "h1b", "visa", "project", "analyze", "analysis",
+    "report", "content", "folder", "upload",
+}
+
+
+def _pick_model(message: str) -> str:
+    """Route to Haiku for simple queries, Sonnet for doc/complex queries."""
+    msg = message.lower()
+    if len(message) > 120:
+        return "claude-sonnet-4-6"
+    if any(signal in msg for signal in _COMPLEX_SIGNALS):
+        return "claude-sonnet-4-6"
+    return "claude-haiku-4-5"
+
 
 @app.post("/chat")
 async def chat(req: ChatRequest):
@@ -156,8 +173,9 @@ async def chat(req: ChatRequest):
     history = session_get(session_id)
     history.append({"role": "user", "content": req.message})
 
+    model = _pick_model(req.message)
     runner = app.state.client.beta.messages.tool_runner(
-        model="claude-sonnet-4-6",
+        model=model,
         max_tokens=1024,
         system=SYSTEM_PROMPT,
         tools=app.state.tools,
@@ -215,11 +233,13 @@ async def stream_chat(req: ChatRequest):
                 break
         return window
 
+    model = _pick_model(req.message)
+
     async def generate():
         response_text = ""
         try:
             runner = app.state.client.beta.messages.tool_runner(
-                model="claude-sonnet-4-6",
+                model=model,
                 max_tokens=1024,
                 system=SYSTEM_PROMPT,
                 tools=app.state.tools,
@@ -249,7 +269,7 @@ async def stream_chat(req: ChatRequest):
                 history.append({"role": "assistant", "content": response_text})
                 session_save(session_id, history)
 
-            done_data = {"type": "done", "session_id": session_id}
+            done_data = {"type": "done", "session_id": session_id, "model": model}
             if has_usage:
                 done_data["usage"] = {
                     "input": total_input,
