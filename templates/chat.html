@@ -74,6 +74,12 @@
       font-size: 0.8rem;
       font-family: monospace;
     }
+    .usage-tag {
+      align-self: flex-start;
+      color: #aaa;
+      font-size: 0.72rem;
+      padding: 2px 0 6px 0;
+    }
     .typing {
       align-self: flex-start;
       color: #999;
@@ -251,6 +257,15 @@
             typing.remove();
             sessionId = event.session_id;
             localStorage.setItem("mcp_session_id", sessionId);
+            if (event.usage) {
+              const u = event.usage;
+              const tag = document.createElement("div");
+              tag.className = "usage-tag";
+              const cached = u.cache_read > 0 ? ` · ${u.cache_read} cached ✓` : "";
+              tag.textContent = `tokens: ${u.input} in · ${u.output} out${cached}`;
+              messagesEl.appendChild(tag);
+              scroll();
+            }
 
           } else if (event.type === "error") {
             typing.remove();

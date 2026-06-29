@@ -201,6 +201,20 @@ async def stream_chat(req: ChatRequest):
     history = session_get(session_id)
     history.append({"role": "user", "content": req.message})
 
+    def _safe_window(hist: list, limit: int) -> list:
+        """Slice history to limit while never splitting a tool_use/tool_result pair."""
+        window = hist[-limit:]
+        # Drop leading tool_result turns that have no matching tool_use in window
+        while window and window[0].get("role") == "user":
+            content = window[0].get("content", "")
+            # A user turn whose content is a list starting with tool_result is orphaned
+            if isinstance(content, list) and content and isinstance(content[0], dict) \
+                    and content[0].get("type") == "tool_result":
+                window = window[1:]
+            else:
+                break
+        return window
+
     async def generate():
         response_text = ""
         try:
@@ -209,10 +223,20 @@ async def stream_chat(req: ChatRequest):
                 max_tokens=1024,
                 system=SYSTEM_PROMPT,
                 tools=app.state.tools,
-                messages=history[-HISTORY_LIMIT:],
+                messages=_safe_window(history, HISTORY_LIMIT),
             )
 
+            # Accumulate usage across all runner turns (one turn per tool round-trip)
+            total_input = total_cache_write = total_cache_read = total_output = 0
+            has_usage = False
             async for msg in runner:
+                if hasattr(msg, "usage") and msg.usage:
+                    u = msg.usage
+                    total_input += u.input_tokens
+                    total_cache_write += getattr(u, "cache_creation_input_tokens", 0)
+                    total_cache_read += getattr(u, "cache_read_input_tokens", 0)
+                    total_output += u.output_tokens
+                    has_usage = True
                 for block in msg.content:
                     if block.type == "tool_use":
                         yield f"data: {json.dumps({'type': 'tool', 'name': block.name})}\n\n"
@@ -220,9 +244,20 @@ async def stream_chat(req: ChatRequest):
                         response_text += block.text
                         yield f"data: {json.dumps({'type': 'text', 'content': block.text})}\n\n"
 
-            history.append({"role": "assistant", "content": response_text})
-            session_save(session_id, history)   # ← persist to SQLite
-            yield f"data: {json.dumps({'type': 'done', 'session_id': session_id})}\n\n"
+            # Only save a non-empty assistant turn to avoid corrupting history
+            if response_text:
+                history.append({"role": "assistant", "content": response_text})
+                session_save(session_id, history)
+
+            done_data = {"type": "done", "session_id": session_id}
+            if has_usage:
+                done_data["usage"] = {
+                    "input": total_input,
+                    "cache_write": total_cache_write,
+                    "cache_read": total_cache_read,
+                    "output": total_output,
+                }
+            yield f"data: {json.dumps(done_data)}\n\n"
 
         except Exception as e:
             yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
