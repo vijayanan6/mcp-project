@@ -725,6 +725,28 @@ usage_log(session_id, model, ..., tools=tools_called)
 | Tool insight | None | Calls + cost + avg cost per MCP tool |
 | Credit management | None | Balance tracker, burn rate, days remaining, alert |
 | Daily chart | None | SVG chart with Y-axis, labels, trend line |
+| Multi-project | None | project column + filter dropdown + Cost by Project table |
+
+### Multi-Project Support (Option C — shared DB)
+
+Added `project` column to `usage_logs` so multiple projects can report to the same dashboard.
+
+**Architecture decision — 3 options considered:**
+- **Option A** — centralised HTTP endpoint (enterprise, requires deployment)
+- **Option B** — shared Python package (each project has its own dashboard)
+- **Option C** — shared SQLite file, project column tag ← built this (simplest, works locally)
+
+Option C grows into Option A naturally: deploy the dashboard to GCP Cloud Run → expose `POST /usage/log` → any project anywhere can report over HTTP.
+
+**To wire up a second project:**
+```python
+# In any new project — just change the project name
+usage_log(session_id, model, ..., project="my-new-project")
+# Point DB_PATH to the same data.db file
+```
+
+**Key pattern learned — multi-tenancy at the data layer:**
+One database, multiple tenants isolated by a tag column. Same pattern used by Salesforce (`org_id`), Stripe (`account_id`), and every enterprise SaaS product.
 
 ---
 

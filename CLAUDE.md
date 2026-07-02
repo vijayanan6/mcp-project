@@ -66,10 +66,33 @@ Browser ──HTTP/SSE──► api.py ──stdio/JSON-RPC──► mcp_server.
 ## Cost Dashboard & Credit Tracking
 
 `GET  /usage`         — visual HTML dashboard (token usage, cost, daily chart, per-session table)
-`GET  /usage/data`    — JSON: totals, by_model, by_day, by_session, credit config
+`GET  /usage/data`    — JSON: totals, by_model, by_day, by_session, by_tool, by_project, credit config
+`GET  /usage/data?project=name` — same but filtered to one project
 `POST /usage/credit`  — save starting balance and alert threshold `{ starting_balance: 5.00, alert_threshold: 1.00 }`
 
-Features: credit balance tracker, burn rate ($/day), days remaining, per-session cost table, low-credit alert badge in chat header (pulses red when remaining < threshold).
+Features: credit balance tracker, burn rate ($/day), days remaining, per-session cost table, cost by tool, cost by project, low-credit alert badge in chat header (pulses red when remaining < threshold).
+
+## Multi-Project Support — How to Wire Up a New Project
+
+This dashboard supports multiple projects reporting to a single SQLite database. All data is tagged by `project` column in `usage_logs`.
+
+**To add a second project:**
+
+1. Copy `database.py` into the new project (or import it as a shared module)
+2. Point `DB_PATH` to the same `data.db` file used by this project:
+   ```python
+   DB_PATH = Path("c:/Users/vijay/OneDrive/Desktop/Claude Workspace/MCP Project/data.db")
+   ```
+3. In the new project's streaming endpoint, pass the project name to `usage_log()`:
+   ```python
+   usage_log(session_id, model, input, cache_write, cache_read, output,
+             tools=tools_called, project="my-new-project")
+   ```
+4. That's it — the new project appears in the dashboard dropdown automatically.
+
+**Filter in dashboard:** Use the Project dropdown in the header to view one project at a time. All cards, charts, and tables filter to the selected project.
+
+**Future upgrade path:** When deployed to GCP, replace the shared file path with a `POST /usage/log` endpoint so any project anywhere can report usage over HTTP — this is Option A (centralised dashboard). Option C (shared file) works locally; Option A works in production.
 
 ## Persistence
 
