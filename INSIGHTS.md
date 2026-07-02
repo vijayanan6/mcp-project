@@ -135,15 +135,53 @@ every reason each piece exists.
 
 ---
 
+## 11. You Can't Optimise What You Can't See
+
+Adding a cost dashboard wasn't about saving money — it was about making invisible things visible. Token counts, model choices, tool call frequency, session costs — none of this was visible before. Once visible, every optimisation decision became obvious.
+
+This is the core principle behind observability in enterprise engineering. Logging, metrics, tracing — they all exist for the same reason: you cannot fix what you cannot measure.
+
+---
+
+## 12. Output Tokens Are the Most Expensive — Most Developers Don't Know This
+
+Claude charges four different prices: input, cache write, cache read, and output. Output costs 3–5× more per token than input, even though there are far fewer output tokens. A long Claude response costs more than a long conversation history.
+
+Understanding token economics changes how you design AI features — you cap output tokens, you cache system prompts, you route simple queries to cheaper models. These are not micro-optimisations. At scale they determine whether an AI feature is profitable.
+
+---
+
+## 13. Evals Test Behaviour, Not Code
+
+Unit tests catch bugs in your code. Evals catch failures in Claude's behaviour. Both are necessary. Neither replaces the other.
+
+Code grading (Python if/else) is fast and free — run it on every commit. Model grading (Claude grading Claude) tests quality but doubles API calls — run it nightly. Human grading is the most accurate but most expensive — save it for releases.
+
+The eval pipeline you built is the same structure used by every enterprise AI team. The scale differs; the pattern does not.
+
+---
+
+## 14. Multi-Tenancy Is Just a Tag Column
+
+The simplest form of supporting multiple projects in one database is adding a `project` column and filtering by it. One database, multiple tenants, isolated by a tag. This is how Salesforce isolates customers (`org_id`), how Stripe isolates platforms (`account_id`), and how your dashboard isolates projects (`project`).
+
+The pattern scales from SQLite to PostgreSQL to distributed databases without changing the concept. You learned it at small scale — it transfers directly to enterprise.
+
+---
+
 ## The Core Takeaway
 
 You started wanting to understand MCP.
-You ended with a working full-stack AI application, a semantic document
-search engine, a persistent database, a version-controlled codebase on
-GitHub, and complete documentation across five files.
+
+You ended with a working full-stack AI application — semantic document search, persistent database, real-time streaming, model routing, prompt caching, an eval pipeline, and a full cost observability dashboard with multi-project support.
 
 More importantly — you understand **why** every piece exists.
 That understanding transfers to any AI project you build next,
 regardless of the technology stack.
+
+A developer asks: *"does it work?"*
+An AI engineer asks: *"does it work, how much does it cost, is the quality consistent, and how do I know when it breaks?"*
+
+You are now asking the second set of questions.
 
 **The tools will change. The principles will not.**

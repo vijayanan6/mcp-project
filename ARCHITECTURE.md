@@ -47,7 +47,9 @@ The entry point for the web application. Built with FastAPI.
 - Streams Claude's responses back in real time using Server-Sent Events
 - Stores and retrieves conversation history from SQLite
 - Auto-indexes documents into ChromaDB on startup
-- Exposes endpoints: `/`, `/chat`, `/stream`, `/tools`, `/sessions`
+- Exposes endpoints: `/`, `/chat`, `/stream`, `/tools`, `/sessions`, `/usage`, `/usage/data`, `/usage/credit`
+- Routes each message to Haiku or Sonnet via `_pick_model()` based on complexity
+- Logs token usage and tool calls to SQLite after every response via `usage_log()`
 
 ### mcp_server.py — MCP Server
 The tool engine. Has no knowledge of Claude, HTTP, or the browser.
@@ -59,13 +61,14 @@ It simply defines tools and executes them when called.
 - Document search runs through ChromaDB via rag.py
 
 ### database.py — SQLite Layer
-Handles all database operations. Two tables:
+Handles all database operations. Four tables:
 
 - **notes** — stores user-saved notes permanently (title, content, timestamp)
 - **sessions** — stores full chat history per session as a JSON array
+- **usage_logs** — stores token counts, model, estimated cost, tools called, and project name per request
+- **credit_config** — singleton row (id=1) storing starting API balance and alert threshold
 
-Data survives restarts. Before this, everything was stored in Python
-dicts and lost when the app stopped.
+Data survives restarts. `usage_log()` accepts a `project` parameter so multiple projects can share one database (multi-tenancy at the data layer).
 
 ### rag.py — Semantic Search
 Handles document indexing and retrieval using ChromaDB.
@@ -86,6 +89,19 @@ A single-page chat interface built with vanilla JavaScript.
 - Sends messages to `/stream` and reads Server-Sent Events in real time
 - Shows tool call indicators (e.g. `→ search_docs`) as Claude uses tools
 - Persists session ID in browser localStorage across page reloads
+- Shows token breakdown and model used after every response
+- Low-credit alert badge pulses red in header when API balance is low
+
+### usage.html — AI Cost Dashboard
+Visual observability dashboard at `/usage`.
+
+- Summary cards: total requests, cost, cache savings, cache hit rate, input/output tokens
+- Token breakdown bar chart (input / cache_write / cache_read / output)
+- Haiku vs Sonnet donut chart with cost split
+- Daily SVG bar chart — 14-day rolling window, Y-axis scale, dollar labels, trend line
+- Cost by Tool table — calls, total cost, avg cost per MCP tool
+- Cost by Project table — multi-project breakdown with filter dropdown
+- Claude API Credit Tracker — starting balance, progress bar, burn rate, days remaining
 
 ### convert_pdfs.py — PDF Converter
 Standalone script for converting scanned PDFs to readable text.
@@ -183,6 +199,23 @@ sessions table
   messages    — full chat history stored as JSON
   created_at  — when session started
   updated_at  — last message time
+
+usage_logs table
+  project             — which project logged this (multi-project support)
+  session_id          — conversation that triggered this request
+  model               — claude-haiku-4-5 or claude-sonnet-4-6
+  input_tokens        — fresh tokens sent this turn
+  cache_write_tokens  — system prompt tokens written to cache
+  cache_read_tokens   — system prompt tokens read from cache (cheap)
+  output_tokens       — tokens Claude generated
+  estimated_cost_usd  — calculated from token counts × pricing table
+  tools_used          — JSON array of tool names called this turn
+  created_at          — timestamp
+
+credit_config table (singleton — always id=1)
+  starting_balance  — user's Anthropic API starting balance
+  alert_threshold   — balance level that triggers the red alert badge
+  updated_at        — last saved timestamp
 ```
 
 ### ChromaDB (chroma_db/)
@@ -296,7 +329,8 @@ MCP Project/
 ├── inspect_db.py       Utility — print SQLite contents
 │
 ├── templates/
-│   └── chat.html       Browser chat UI — SSE streaming, session storage
+│   ├── chat.html       Browser chat UI — SSE streaming, session storage, credit alert badge
+│   └── usage.html      AI Cost Dashboard — token breakdown, credit tracker, tool costs, project filter
 │
 ├── docs/               Drop documents here
 │   ├── *.txt           Plain text files
@@ -306,9 +340,17 @@ MCP Project/
 ├── data.db             SQLite database (auto-created, gitignored)
 ├── chroma_db/          ChromaDB vector store (auto-created, gitignored)
 │
-├── CLAUDE.md           Guidance for Claude Code
-├── README.md           Project overview and setup
-├── ARCHITECTURE.md     This file
-├── LEARNING_JOURNEY.md Phase-by-phase learning record
-└── requirements.txt    Python dependencies
+├── evals/
+│   ├── dataset.json    12 test cases — tool selection + model routing
+│   └── run_evals.py    Eval runner — calls /chat, scores, reports pass/fail
+│
+├── CLAUDE.md                  Guidance for Claude Code
+├── README.md                  Project overview and setup
+├── ARCHITECTURE.md            This file
+├── LEARNING_JOURNEY.md        Phase-by-phase learning record
+├── LEARNING_PLAN.md           Roadmap to expert AI engineer
+├── INSIGHTS.md                Key lessons and principles
+├── AI_ENGINEERING_PORTFOLIO.md LinkedIn/GitHub portfolio
+├── GIT_COMMANDS.md            Git reference
+└── requirements.txt           Python dependencies
 ```
