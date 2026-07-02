@@ -156,6 +156,31 @@
     </div>
   </div>
 
+  <!-- Cost Forecast -->
+  <div class="section" id="forecast-section" style="display:none;margin-bottom:20px">
+    <div class="section-header" style="margin-bottom:14px">
+      <h2>Cost Forecast</h2>
+      <span style="font-size:0.75rem;color:#475569">based on current burn rate</span>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:14px">
+      <div style="background:#0f172a;border:1px solid #334155;border-radius:10px;padding:16px 20px;border-top:3px solid #38bdf8">
+        <div style="font-size:0.72rem;color:#64748b;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:8px">30 Days</div>
+        <div style="font-size:1.6rem;font-weight:700;color:#38bdf8" id="forecast-30">—</div>
+        <div style="font-size:0.72rem;color:#475569;margin-top:4px">projected spend</div>
+      </div>
+      <div style="background:#0f172a;border:1px solid #334155;border-radius:10px;padding:16px 20px;border-top:3px solid #a78bfa">
+        <div style="font-size:0.72rem;color:#64748b;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:8px">60 Days</div>
+        <div style="font-size:1.6rem;font-weight:700;color:#a78bfa" id="forecast-60">—</div>
+        <div style="font-size:0.72rem;color:#475569;margin-top:4px">projected spend</div>
+      </div>
+      <div style="background:#0f172a;border:1px solid #334155;border-radius:10px;padding:16px 20px;border-top:3px solid #fbbf24">
+        <div style="font-size:0.72rem;color:#64748b;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:8px">90 Days</div>
+        <div style="font-size:1.6rem;font-weight:700;color:#fbbf24" id="forecast-90">—</div>
+        <div style="font-size:0.72rem;color:#475569;margin-top:4px">projected spend</div>
+      </div>
+    </div>
+  </div>
+
   <!-- Summary Cards -->
   <div class="grid">
     <div class="card blue"><div class="label">Total Requests</div><div class="value" id="total-requests">—</div></div>
@@ -332,6 +357,15 @@
       const totalDays = Math.max(days, 1);
       const burnPerDay = spent / totalDays;
       document.getElementById('ci-burnrate').textContent = fmtCost(burnPerDay) + '/day';
+
+      // Forecast
+      if (burnPerDay > 0) {
+        document.getElementById('forecast-section').style.display = 'block';
+        document.getElementById('forecast-30').textContent = '$' + (burnPerDay * 30).toFixed(2);
+        document.getElementById('forecast-60').textContent = '$' + (burnPerDay * 60).toFixed(2);
+        document.getElementById('forecast-90').textContent = '$' + (burnPerDay * 90).toFixed(2);
+      }
+
       const daysLeft = burnPerDay > 0 ? Math.floor(remaining / burnPerDay) : '∞';
       const dlEl = document.getElementById('ci-daysleft');
       dlEl.textContent = daysLeft;
