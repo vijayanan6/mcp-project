@@ -6,144 +6,271 @@
   <title>AI Cost Dashboard</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #0f172a; color: #e2e8f0; min-height: 100vh; padding: 32px 24px; }
-    h1 { font-size: 1.5rem; font-weight: 700; color: #f8fafc; margin-bottom: 4px; }
-    .subtitle { color: #64748b; font-size: 0.875rem; margin-bottom: 32px; }
-    .subtitle a { color: #38bdf8; text-decoration: none; }
-    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; margin-bottom: 32px; }
-    .card { background: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 20px; }
-    .card .label { font-size: 0.75rem; color: #64748b; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 8px; }
-    .card .value { font-size: 1.75rem; font-weight: 700; color: #f8fafc; }
-    .card .value.green { color: #34d399; }
-    .card .value.yellow { color: #fbbf24; }
-    .card .value.blue { color: #38bdf8; }
-    .card .sub { font-size: 0.75rem; color: #475569; margin-top: 4px; }
-    .section { background: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 24px; margin-bottom: 24px; }
-    .section h2 { font-size: 1rem; font-weight: 600; color: #cbd5e1; margin-bottom: 16px; }
-    table { width: 100%; border-collapse: collapse; font-size: 0.875rem; }
-    th { text-align: left; color: #64748b; font-weight: 500; padding: 8px 12px; border-bottom: 1px solid #334155; }
-    td { padding: 10px 12px; border-bottom: 1px solid #1e293b; color: #cbd5e1; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #0f172a; color: #e2e8f0; min-height: 100vh; padding: 28px 24px; }
+
+    /* Header */
+    .header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 28px; }
+    .header-left h1 { font-size: 1.4rem; font-weight: 700; color: #f8fafc; }
+    .header-left p { color: #64748b; font-size: 0.8rem; margin-top: 2px; }
+    .header-left p a { color: #38bdf8; text-decoration: none; }
+    .refresh-btn { background: #1e293b; border: 1px solid #334155; color: #cbd5e1; padding: 8px 18px; border-radius: 8px; cursor: pointer; font-size: 0.82rem; transition: background 0.15s; }
+    .refresh-btn:hover { background: #334155; }
+
+    /* Summary cards */
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 14px; margin-bottom: 24px; }
+    .card { background: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 18px 20px; position: relative; overflow: hidden; }
+    .card::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px; }
+    .card.blue::before { background: #38bdf8; }
+    .card.green::before { background: #34d399; }
+    .card.yellow::before { background: #fbbf24; }
+    .card.purple::before { background: #a78bfa; }
+    .card .label { font-size: 0.72rem; color: #64748b; text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 10px; }
+    .card .value { font-size: 1.8rem; font-weight: 700; color: #f8fafc; line-height: 1; }
+    .card.blue .value { color: #38bdf8; }
+    .card.green .value { color: #34d399; }
+    .card.yellow .value { color: #fbbf24; }
+    .card.purple .value { color: #a78bfa; }
+    .card .sub { font-size: 0.72rem; color: #475569; margin-top: 6px; }
+
+    /* Sections */
+    .section { background: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 22px 24px; margin-bottom: 20px; }
+    .section-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; }
+    .section-header h2 { font-size: 0.95rem; font-weight: 600; color: #cbd5e1; }
+
+    /* Donut chart */
+    .chart-row { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-bottom: 20px; }
+    .donut-wrap { display: flex; align-items: center; gap: 24px; }
+    .donut-wrap svg { flex-shrink: 0; }
+    .legend { display: flex; flex-direction: column; gap: 10px; }
+    .legend-item { display: flex; align-items: center; gap: 8px; font-size: 0.82rem; }
+    .legend-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+
+    /* Token breakdown bar */
+    .token-bar-wrap { margin-bottom: 6px; }
+    .token-bar-label { display: flex; justify-content: space-between; font-size: 0.78rem; color: #94a3b8; margin-bottom: 5px; }
+    .token-bar-bg { background: #0f172a; border-radius: 6px; height: 8px; overflow: hidden; }
+    .token-bar-fill { height: 8px; border-radius: 6px; transition: width 0.6s ease; }
+
+    /* Daily chart */
+    .daily-chart { display: flex; align-items: flex-end; gap: 6px; height: 80px; margin-bottom: 12px; }
+    .day-bar-wrap { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px; height: 100%; justify-content: flex-end; }
+    .day-bar { width: 100%; background: #38bdf8; border-radius: 3px 3px 0 0; min-height: 2px; transition: height 0.5s ease; position: relative; }
+    .day-bar:hover::after { content: attr(data-tip); position: absolute; bottom: 110%; left: 50%; transform: translateX(-50%); background: #0f172a; border: 1px solid #334155; color: #e2e8f0; font-size: 0.7rem; padding: 4px 8px; border-radius: 4px; white-space: nowrap; pointer-events: none; }
+    .day-label { font-size: 0.62rem; color: #475569; text-align: center; }
+
+    /* Table */
+    table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+    th { text-align: left; color: #64748b; font-weight: 500; padding: 8px 12px; border-bottom: 1px solid #334155; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.04em; }
+    td { padding: 11px 12px; border-bottom: 1px solid #1a2332; color: #cbd5e1; }
     tr:last-child td { border-bottom: none; }
-    tr:hover td { background: #0f172a; }
-    .badge { display: inline-block; padding: 2px 8px; border-radius: 9999px; font-size: 0.7rem; font-weight: 600; }
+    tr:hover td { background: #162032; }
+
+    .badge { display: inline-block; padding: 3px 9px; border-radius: 9999px; font-size: 0.7rem; font-weight: 600; }
     .badge.haiku { background: #14532d; color: #4ade80; }
     .badge.sonnet { background: #1e3a5f; color: #38bdf8; }
-    .bar-wrap { background: #0f172a; border-radius: 4px; height: 6px; margin-top: 4px; }
-    .bar { background: #38bdf8; height: 6px; border-radius: 4px; }
-    .empty { color: #475569; text-align: center; padding: 32px; }
-    .refresh { float: right; background: #334155; color: #cbd5e1; border: none; padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 0.8rem; }
-    .refresh:hover { background: #475569; }
-    .pricing-note { background: #0f172a; border: 1px solid #334155; border-radius: 8px; padding: 12px 16px; font-size: 0.75rem; color: #64748b; margin-top: 16px; }
-    .pricing-note strong { color: #94a3b8; }
+
+    .pct-bar { background: #0f172a; border-radius: 3px; height: 5px; margin-top: 5px; overflow: hidden; }
+    .pct-fill { height: 5px; border-radius: 3px; }
+
+    .empty { color: #475569; text-align: center; padding: 32px; font-size: 0.85rem; }
+    .pricing-note { background: #0f172a; border: 1px solid #1e293b; border-radius: 8px; padding: 12px 16px; font-size: 0.73rem; color: #475569; margin-top: 4px; line-height: 1.6; }
+    .pricing-note strong { color: #64748b; }
   </style>
 </head>
 <body>
-  <h1>AI Cost Dashboard</h1>
-  <p class="subtitle">Token usage and estimated cost for this session &nbsp;|&nbsp; <a href="/">Back to Chat</a></p>
 
-  <div class="grid" id="summary-cards">
-    <div class="card"><div class="label">Total Requests</div><div class="value blue" id="total-requests">—</div></div>
-    <div class="card"><div class="label">Estimated Cost</div><div class="value green" id="total-cost">—</div><div class="sub">USD since first request</div></div>
-    <div class="card"><div class="label">Input Tokens</div><div class="value" id="total-input">—</div></div>
-    <div class="card"><div class="label">Cache Reads</div><div class="value yellow" id="total-cache-read">—</div><div class="sub">~90% cheaper than input</div></div>
-    <div class="card"><div class="label">Output Tokens</div><div class="value" id="total-output">—</div></div>
-    <div class="card"><div class="label">Cache Savings</div><div class="value green" id="cache-savings">—</div><div class="sub">vs no caching</div></div>
+  <div class="header">
+    <div class="header-left">
+      <h1>AI Cost Dashboard</h1>
+      <p>Token usage &amp; estimated spend &nbsp;|&nbsp; <a href="/">Back to Chat</a></p>
+    </div>
+    <button class="refresh-btn" onclick="load()">Refresh</button>
   </div>
 
+  <!-- Summary Cards -->
+  <div class="grid">
+    <div class="card blue"><div class="label">Total Requests</div><div class="value" id="total-requests">—</div></div>
+    <div class="card green"><div class="label">Estimated Cost</div><div class="value" id="total-cost">—</div><div class="sub">USD since first use</div></div>
+    <div class="card yellow"><div class="label">Cache Savings</div><div class="value" id="cache-savings">—</div><div class="sub">vs no prompt caching</div></div>
+    <div class="card purple"><div class="label">Cache Hit Rate</div><div class="value" id="cache-hit-rate">—</div><div class="sub">of input tokens cached</div></div>
+    <div class="card blue"><div class="label">Input Tokens</div><div class="value" id="total-input">—</div></div>
+    <div class="card blue"><div class="label">Output Tokens</div><div class="value" id="total-output">—</div></div>
+  </div>
+
+  <!-- Token Breakdown + Model Split -->
+  <div class="chart-row">
+
+    <div class="section">
+      <div class="section-header"><h2>Token Breakdown</h2></div>
+      <div id="token-bars"><div class="empty">No data yet.</div></div>
+    </div>
+
+    <div class="section">
+      <div class="section-header"><h2>Cost by Model</h2></div>
+      <div class="donut-wrap">
+        <svg width="100" height="100" viewBox="0 0 100 100" id="donut-svg">
+          <circle cx="50" cy="50" r="38" fill="none" stroke="#1a2332" stroke-width="18"/>
+          <circle id="donut-haiku" cx="50" cy="50" r="38" fill="none" stroke="#4ade80" stroke-width="18"
+            stroke-dasharray="0 239" stroke-dashoffset="60" transform="rotate(-90 50 50)" style="transition:stroke-dasharray 0.6s"/>
+          <circle id="donut-sonnet" cx="50" cy="50" r="38" fill="none" stroke="#38bdf8" stroke-width="18"
+            stroke-dasharray="0 239" stroke-dashoffset="60" transform="rotate(-90 50 50)" style="transition:stroke-dasharray 0.6s"/>
+          <text x="50" y="46" text-anchor="middle" fill="#f8fafc" font-size="11" font-weight="700" id="donut-center-val">—</text>
+          <text x="50" y="58" text-anchor="middle" fill="#64748b" font-size="7">total cost</text>
+        </svg>
+        <div class="legend" id="model-legend"><div class="empty" style="padding:0;font-size:0.8rem">No data yet.</div></div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Daily Usage Chart -->
   <div class="section">
-    <h2>Cost by Model <button class="refresh" onclick="load()">Refresh</button></h2>
+    <div class="section-header"><h2>Daily Usage — last 14 days</h2></div>
+    <div class="daily-chart" id="daily-chart"><div class="empty" style="width:100%">No data yet.</div></div>
+    <div style="display:flex;gap:6px;margin-top:4px" id="daily-labels"></div>
+  </div>
+
+  <!-- Model Table -->
+  <div class="section">
+    <div class="section-header"><h2>Model Detail</h2></div>
     <table>
       <thead><tr><th>Model</th><th>Requests</th><th>Cost (USD)</th><th>Share</th></tr></thead>
-      <tbody id="model-table"><tr><td colspan="4" class="empty">No data yet — send a message in the chat first.</td></tr></tbody>
-    </table>
-  </div>
-
-  <div class="section">
-    <h2>Daily Usage (last 14 days)</h2>
-    <table>
-      <thead><tr><th>Date</th><th>Requests</th><th>Cost (USD)</th></tr></thead>
-      <tbody id="day-table"><tr><td colspan="3" class="empty">No data yet.</td></tr></tbody>
+      <tbody id="model-table"><tr><td colspan="4" class="empty">No data yet — send a message in chat first.</td></tr></tbody>
     </table>
   </div>
 
   <div class="pricing-note">
-    <strong>Pricing used for estimates:</strong>
-    Haiku — input $0.0008/1K · output $0.004/1K · cache read $0.00008/1K &nbsp;|&nbsp;
-    Sonnet — input $0.003/1K · output $0.015/1K · cache read $0.0003/1K &nbsp;|&nbsp;
-    Estimates only — check <strong>console.anthropic.com</strong> for exact billing.
+    <strong>Pricing (estimates only):</strong>
+    Haiku — $0.0008/1K input · $0.004/1K output · $0.00008/1K cache read &nbsp;|&nbsp;
+    Sonnet — $0.003/1K input · $0.015/1K output · $0.0003/1K cache read &nbsp;|&nbsp;
+    Verify exact spend at <strong>console.anthropic.com</strong>
   </div>
 
-  <script>
-    async function load() {
-      const res = await fetch('/usage/data');
-      const data = await res.json();
-      const t = data.totals;
+<script>
+  const COLORS = { haiku: '#4ade80', sonnet: '#38bdf8', input: '#38bdf8', cache_write: '#fbbf24', cache_read: '#34d399', output: '#a78bfa' };
 
-      if (!t || !t.total_requests) return;
+  function fmt(n) {
+    if (!n) return '0';
+    if (n >= 1000000) return (n/1000000).toFixed(1)+'M';
+    if (n >= 1000) return (n/1000).toFixed(1)+'K';
+    return String(n);
+  }
 
-      document.getElementById('total-requests').textContent = t.total_requests ?? 0;
-      document.getElementById('total-cost').textContent = '$' + (t.total_cost_usd ?? 0).toFixed(4);
-      document.getElementById('total-input').textContent = fmt(t.total_input);
-      document.getElementById('total-cache-read').textContent = fmt(t.total_cache_read);
-      document.getElementById('total-output').textContent = fmt(t.total_output);
+  function fmtCost(v) { return '$'+(v||0).toFixed(4); }
 
-      // Cache savings = what cache_read tokens would have cost at full input price vs actual cache price
-      const byModel = data.by_model || [];
-      let savings = 0;
-      byModel.forEach(m => {
-        const inputRate = m.model.includes('haiku') ? 0.0008 : 0.003;
-        const cacheRate = m.model.includes('haiku') ? 0.00008 : 0.0003;
-      });
-      // Simplified savings estimate
-      const totalCacheRead = t.total_cache_read ?? 0;
-      const avgInputRate = 0.002; // rough average
-      const avgCacheRate = 0.0002;
-      savings = (totalCacheRead / 1000) * (avgInputRate - avgCacheRate);
-      document.getElementById('cache-savings').textContent = '$' + savings.toFixed(4);
+  async function load() {
+    const data = await fetch('/usage/data').then(r=>r.json());
+    const t = data.totals || {};
+    const byModel = data.by_model || [];
+    const byDay   = data.by_day   || [];
 
-      // Model table
-      const totalCost = t.total_cost_usd ?? 1;
-      const modelTbody = document.getElementById('model-table');
-      if (byModel.length === 0) {
-        modelTbody.innerHTML = '<tr><td colspan="4" class="empty">No data yet.</td></tr>';
-      } else {
-        modelTbody.innerHTML = byModel.map(m => {
-          const pct = Math.round((m.cost_usd / totalCost) * 100);
+    if (!t.total_requests) return;
+
+    // Cards
+    document.getElementById('total-requests').textContent = t.total_requests;
+    document.getElementById('total-cost').textContent = fmtCost(t.total_cost_usd);
+    document.getElementById('total-input').textContent = fmt(t.total_input);
+    document.getElementById('total-output').textContent = fmt(t.total_output);
+
+    const cacheRead = t.total_cache_read || 0;
+    const avgSavingRate = 0.0018; // avg input rate - avg cache read rate
+    document.getElementById('cache-savings').textContent = fmtCost((cacheRead/1000)*avgSavingRate);
+
+    const totalIn = (t.total_input||0) + (t.total_cache_read||0);
+    const hitRate = totalIn > 0 ? Math.round((cacheRead/totalIn)*100) : 0;
+    document.getElementById('cache-hit-rate').textContent = hitRate+'%';
+
+    // Token breakdown bars
+    const tokenItems = [
+      { label: 'Input', val: t.total_input||0, color: COLORS.input },
+      { label: 'Cache Write', val: t.total_cache_write||0, color: COLORS.cache_write },
+      { label: 'Cache Read', val: t.total_cache_read||0, color: COLORS.cache_read },
+      { label: 'Output', val: t.total_output||0, color: COLORS.output },
+    ];
+    const maxTok = Math.max(...tokenItems.map(i=>i.val), 1);
+    document.getElementById('token-bars').innerHTML = tokenItems.map(item => `
+      <div class="token-bar-wrap" style="margin-bottom:14px">
+        <div class="token-bar-label"><span>${item.label}</span><span>${fmt(item.val)}</span></div>
+        <div class="token-bar-bg">
+          <div class="token-bar-fill" style="width:${Math.round((item.val/maxTok)*100)}%;background:${item.color}"></div>
+        </div>
+      </div>`).join('');
+
+    // Donut chart
+    const totalCost = t.total_cost_usd || 0.0001;
+    const circ = 2 * Math.PI * 38; // ~238.76
+    let offset = 60;
+    byModel.forEach((m, i) => {
+      const pct = m.cost_usd / totalCost;
+      const dash = pct * circ;
+      const color = m.model.includes('haiku') ? COLORS.haiku : COLORS.sonnet;
+      const id = m.model.includes('haiku') ? 'donut-haiku' : 'donut-sonnet';
+      const el = document.getElementById(id);
+      if (el) {
+        el.setAttribute('stroke', color);
+        el.setAttribute('stroke-dasharray', `${dash} ${circ - dash}`);
+        el.setAttribute('stroke-dashoffset', offset);
+        offset -= dash;
+      }
+    });
+    document.getElementById('donut-center-val').textContent = fmtCost(totalCost);
+
+    // Legend
+    document.getElementById('model-legend').innerHTML = byModel.length === 0
+      ? '<div class="empty" style="padding:0;font-size:0.8rem">No data yet.</div>'
+      : byModel.map(m => {
+          const color = m.model.includes('haiku') ? COLORS.haiku : COLORS.sonnet;
+          const name  = m.model.includes('haiku') ? 'Haiku' : 'Sonnet';
+          const pct   = Math.round((m.cost_usd/totalCost)*100);
+          return `<div class="legend-item">
+            <div class="legend-dot" style="background:${color}"></div>
+            <div>
+              <div style="font-size:0.82rem;color:#cbd5e1">${name} — ${pct}%</div>
+              <div style="font-size:0.72rem;color:#475569">${m.requests} req · ${fmtCost(m.cost_usd)}</div>
+            </div>
+          </div>`;
+        }).join('');
+
+    // Model table
+    document.getElementById('model-table').innerHTML = byModel.length === 0
+      ? '<tr><td colspan="4" class="empty">No data yet.</td></tr>'
+      : byModel.map(m => {
+          const pct   = Math.round((m.cost_usd/totalCost)*100);
+          const color = m.model.includes('haiku') ? COLORS.haiku : COLORS.sonnet;
           const badge = m.model.includes('haiku')
-            ? `<span class="badge haiku">Haiku</span>`
-            : `<span class="badge sonnet">Sonnet</span>`;
+            ? '<span class="badge haiku">Haiku</span>'
+            : '<span class="badge sonnet">Sonnet</span>';
           return `<tr>
-            <td>${badge} ${m.model}</td>
+            <td>${badge} <span style="font-size:0.8rem;color:#64748b">${m.model}</span></td>
             <td>${m.requests}</td>
-            <td>$${m.cost_usd.toFixed(4)}</td>
-            <td>
+            <td>${fmtCost(m.cost_usd)}</td>
+            <td style="width:140px">
               ${pct}%
-              <div class="bar-wrap"><div class="bar" style="width:${pct}%"></div></div>
+              <div class="pct-bar"><div class="pct-fill" style="width:${pct}%;background:${color}"></div></div>
             </td>
           </tr>`;
         }).join('');
-      }
 
-      // Daily table
-      const dayTbody = document.getElementById('day-table');
-      const byDay = data.by_day || [];
-      if (byDay.length === 0) {
-        dayTbody.innerHTML = '<tr><td colspan="3" class="empty">No data yet.</td></tr>';
-      } else {
-        dayTbody.innerHTML = byDay.map(d =>
-          `<tr><td>${d.day}</td><td>${d.requests}</td><td>$${d.cost_usd.toFixed(4)}</td></tr>`
-        ).join('');
-      }
+    // Daily bar chart
+    if (byDay.length > 0) {
+      const maxCost = Math.max(...byDay.map(d=>d.cost_usd), 0.0001);
+      const reversed = [...byDay].reverse();
+      document.getElementById('daily-chart').innerHTML = reversed.map(d => {
+        const h = Math.max(Math.round((d.cost_usd/maxCost)*76), 2);
+        const shortDate = d.day.slice(5); // MM-DD
+        return `<div class="day-bar-wrap">
+          <div class="day-bar" style="height:${h}px" data-tip="${d.day}: ${fmtCost(d.cost_usd)} · ${d.requests} req"></div>
+        </div>`;
+      }).join('');
+      document.getElementById('daily-labels').innerHTML = reversed.map(d =>
+        `<div class="day-label" style="flex:1">${d.day.slice(5)}</div>`
+      ).join('');
     }
+  }
 
-    function fmt(n) {
-      if (!n) return '0';
-      if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
-      if (n >= 1000) return (n / 1000).toFixed(1) + 'K';
-      return n.toString();
-    }
-
-    load();
-  </script>
+  load();
+  // Auto-refresh every 30 seconds
+  setInterval(load, 30000);
+</script>
 </body>
 </html>

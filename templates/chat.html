@@ -99,6 +99,20 @@
       cursor: pointer;
     }
     #new-session:hover { background: rgba(255,255,255,0.1); }
+    #cost-link {
+      background: transparent;
+      border: 1px solid rgba(52,211,153,0.4);
+      color: #34d399;
+      border-radius: 6px;
+      padding: 4px 12px;
+      font-size: 0.75rem;
+      cursor: pointer;
+      text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+    }
+    #cost-link:hover { background: rgba(52,211,153,0.1); }
 
     /* ── Footer / input ── */
     footer {
@@ -140,6 +154,7 @@
   <h1>⚡ MCP Learning Agent</h1>
   <div style="display:flex;gap:10px;align-items:center">
     <span id="tools-badge">Loading tools…</span>
+    <a id="cost-link" href="/usage" target="_blank">Cost Dashboard</a>
     <button id="new-session" onclick="newSession()">New chat</button>
   </div>
 </header>
