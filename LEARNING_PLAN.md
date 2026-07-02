@@ -310,6 +310,36 @@ code.claude.com/docs/en/plugins-reference.md (schema)
 
 ---
 
+## Final Phase — Claude Code Skill / Plugin
+**Goal: Ship a real Claude Code plugin that packages all standards built throughout this project**
+
+This is the end product of the entire learning journey. Everything built and learned feeds into this.
+
+### Plugin Skills to include
+- [ ] `/ai-engineer:setup` — scaffolds a new AI project with CLAUDE.md, .env, .gitignore, evals/ folder
+- [ ] `/ai-engineer:eval` — runs the eval pipeline and reports pass/fail score
+- [ ] `/ai-engineer:document` — updates CLAUDE.md, LEARNING_JOURNEY.md, and portfolio after a phase
+- [ ] `/ai-engineer:review` — reviews system prompts for enterprise patterns (caching, routing, injection defense)
+
+### Plugin structure
+- [ ] Create `.claude-plugin/plugin.json` with name, description, version, author
+- [ ] Add each skill as `skills/<skill-name>/SKILL.md` with proper frontmatter
+- [ ] Publish to a GitHub repo as a marketplace
+- [ ] Test install via `/plugin marketplace add vijayanan6/<repo>`
+- [ ] Verify all skills work on a fresh machine
+
+### Standards the plugin encapsulates
+- CLAUDE.md discipline — every project starts with proper documentation
+- Eval pipeline — `evals/dataset.json` + `evals/run_evals.py` scaffolded automatically
+- Prompt engineering patterns — system prompt template with caching, routing, injection defense
+- Model routing — `_pick_model()` pattern included in scaffolded code
+- RAG setup — ChromaDB + sentence-transformers wired up out of the box
+- Environment management — `.env` + `python-dotenv` standard
+
+**Success check:** A developer installs your plugin, runs `/ai-engineer:setup`, and gets a production-ready AI project scaffold with all enterprise standards baked in — in under 5 minutes
+
+---
+
 ## GCP Services to Learn (Running List)
 - [ ] Cloud Run — serverless containers ← start here
 - [ ] Artifact Registry — Docker image storage
