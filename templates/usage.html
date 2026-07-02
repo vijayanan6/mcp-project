@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AI Cost Dashboard</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #0f172a; color: #e2e8f0; min-height: 100vh; padding: 32px 24px; }
+    h1 { font-size: 1.5rem; font-weight: 700; color: #f8fafc; margin-bottom: 4px; }
+    .subtitle { color: #64748b; font-size: 0.875rem; margin-bottom: 32px; }
+    .subtitle a { color: #38bdf8; text-decoration: none; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; margin-bottom: 32px; }
+    .card { background: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 20px; }
+    .card .label { font-size: 0.75rem; color: #64748b; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 8px; }
+    .card .value { font-size: 1.75rem; font-weight: 700; color: #f8fafc; }
+    .card .value.green { color: #34d399; }
+    .card .value.yellow { color: #fbbf24; }
+    .card .value.blue { color: #38bdf8; }
+    .card .sub { font-size: 0.75rem; color: #475569; margin-top: 4px; }
+    .section { background: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 24px; margin-bottom: 24px; }
+    .section h2 { font-size: 1rem; font-weight: 600; color: #cbd5e1; margin-bottom: 16px; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.875rem; }
+    th { text-align: left; color: #64748b; font-weight: 500; padding: 8px 12px; border-bottom: 1px solid #334155; }
+    td { padding: 10px 12px; border-bottom: 1px solid #1e293b; color: #cbd5e1; }
+    tr:last-child td { border-bottom: none; }
+    tr:hover td { background: #0f172a; }
+    .badge { display: inline-block; padding: 2px 8px; border-radius: 9999px; font-size: 0.7rem; font-weight: 600; }
+    .badge.haiku { background: #14532d; color: #4ade80; }
+    .badge.sonnet { background: #1e3a5f; color: #38bdf8; }
+    .bar-wrap { background: #0f172a; border-radius: 4px; height: 6px; margin-top: 4px; }
+    .bar { background: #38bdf8; height: 6px; border-radius: 4px; }
+    .empty { color: #475569; text-align: center; padding: 32px; }
+    .refresh { float: right; background: #334155; color: #cbd5e1; border: none; padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 0.8rem; }
+    .refresh:hover { background: #475569; }
+    .pricing-note { background: #0f172a; border: 1px solid #334155; border-radius: 8px; padding: 12px 16px; font-size: 0.75rem; color: #64748b; margin-top: 16px; }
+    .pricing-note strong { color: #94a3b8; }
+  </style>
+</head>
+<body>
+  <h1>AI Cost Dashboard</h1>
+  <p class="subtitle">Token usage and estimated cost for this session &nbsp;|&nbsp; <a href="/">Back to Chat</a></p>
+
+  <div class="grid" id="summary-cards">
+    <div class="card"><div class="label">Total Requests</div><div class="value blue" id="total-requests">—</div></div>
+    <div class="card"><div class="label">Estimated Cost</div><div class="value green" id="total-cost">—</div><div class="sub">USD since first request</div></div>
+    <div class="card"><div class="label">Input Tokens</div><div class="value" id="total-input">—</div></div>
+    <div class="card"><div class="label">Cache Reads</div><div class="value yellow" id="total-cache-read">—</div><div class="sub">~90% cheaper than input</div></div>
+    <div class="card"><div class="label">Output Tokens</div><div class="value" id="total-output">—</div></div>
+    <div class="card"><div class="label">Cache Savings</div><div class="value green" id="cache-savings">—</div><div class="sub">vs no caching</div></div>
+  </div>
+
+  <div class="section">
+    <h2>Cost by Model <button class="refresh" onclick="load()">Refresh</button></h2>
+    <table>
+      <thead><tr><th>Model</th><th>Requests</th><th>Cost (USD)</th><th>Share</th></tr></thead>
+      <tbody id="model-table"><tr><td colspan="4" class="empty">No data yet — send a message in the chat first.</td></tr></tbody>
+    </table>
+  </div>
+
+  <div class="section">
+    <h2>Daily Usage (last 14 days)</h2>
+    <table>
+      <thead><tr><th>Date</th><th>Requests</th><th>Cost (USD)</th></tr></thead>
+      <tbody id="day-table"><tr><td colspan="3" class="empty">No data yet.</td></tr></tbody>
+    </table>
+  </div>
+
+  <div class="pricing-note">
+    <strong>Pricing used for estimates:</strong>
+    Haiku — input $0.0008/1K · output $0.004/1K · cache read $0.00008/1K &nbsp;|&nbsp;
+    Sonnet — input $0.003/1K · output $0.015/1K · cache read $0.0003/1K &nbsp;|&nbsp;
+    Estimates only — check <strong>console.anthropic.com</strong> for exact billing.
+  </div>
+
+  <script>
+    async function load() {
+      const res = await fetch('/usage/data');
+      const data = await res.json();
+      const t = data.totals;
+
+      if (!t || !t.total_requests) return;
+
+      document.getElementById('total-requests').textContent = t.total_requests ?? 0;
+      document.getElementById('total-cost').textContent = '$' + (t.total_cost_usd ?? 0).toFixed(4);
+      document.getElementById('total-input').textContent = fmt(t.total_input);
+      document.getElementById('total-cache-read').textContent = fmt(t.total_cache_read);
+      document.getElementById('total-output').textContent = fmt(t.total_output);
+
+      // Cache savings = what cache_read tokens would have cost at full input price vs actual cache price
+      const byModel = data.by_model || [];
+      let savings = 0;
+      byModel.forEach(m => {
+        const inputRate = m.model.includes('haiku') ? 0.0008 : 0.003;
+        const cacheRate = m.model.includes('haiku') ? 0.00008 : 0.0003;
+      });
+      // Simplified savings estimate
+      const totalCacheRead = t.total_cache_read ?? 0;
+      const avgInputRate = 0.002; // rough average
+      const avgCacheRate = 0.0002;
+      savings = (totalCacheRead / 1000) * (avgInputRate - avgCacheRate);
+      document.getElementById('cache-savings').textContent = '$' + savings.toFixed(4);
+
+      // Model table
+      const totalCost = t.total_cost_usd ?? 1;
+      const modelTbody = document.getElementById('model-table');
+      if (byModel.length === 0) {
+        modelTbody.innerHTML = '<tr><td colspan="4" class="empty">No data yet.</td></tr>';
+      } else {
+        modelTbody.innerHTML = byModel.map(m => {
+          const pct = Math.round((m.cost_usd / totalCost) * 100);
+          const badge = m.model.includes('haiku')
+            ? `<span class="badge haiku">Haiku</span>`
+            : `<span class="badge sonnet">Sonnet</span>`;
+          return `<tr>
+            <td>${badge} ${m.model}</td>
+            <td>${m.requests}</td>
+            <td>$${m.cost_usd.toFixed(4)}</td>
+            <td>
+              ${pct}%
+              <div class="bar-wrap"><div class="bar" style="width:${pct}%"></div></div>
+            </td>
+          </tr>`;
+        }).join('');
+      }
+
+      // Daily table
+      const dayTbody = document.getElementById('day-table');
+      const byDay = data.by_day || [];
+      if (byDay.length === 0) {
+        dayTbody.innerHTML = '<tr><td colspan="3" class="empty">No data yet.</td></tr>';
+      } else {
+        dayTbody.innerHTML = byDay.map(d =>
+          `<tr><td>${d.day}</td><td>${d.requests}</td><td>$${d.cost_usd.toFixed(4)}</td></tr>`
+        ).join('');
+      }
+    }
+
+    function fmt(n) {
+      if (!n) return '0';
+      if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
+      if (n >= 1000) return (n / 1000).toFixed(1) + 'K';
+      return n.toString();
+    }
+
+    load();
+  </script>
+</body>
+</html>

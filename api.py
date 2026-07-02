@@ -31,7 +31,7 @@ from anthropic import AsyncAnthropic
 from anthropic.lib.tools.mcp import async_mcp_tool
 from mcp import ClientSession
 from mcp.client.stdio import StdioServerParameters, stdio_client
-from database import init_db, session_get, session_save, session_list, session_delete
+from database import init_db, session_get, session_save, session_list, session_delete, usage_log, usage_summary
 
 SERVER_SCRIPT = str(Path(__file__).parent / "mcp_server.py")
 
@@ -126,6 +126,19 @@ async def clear_session(session_id: str):
     if not session_delete(session_id):
         raise HTTPException(status_code=404, detail="Session not found")
     return {"cleared": session_id}
+
+
+@app.get("/usage", response_class=HTMLResponse)
+async def usage_dashboard():
+    """Serve the cost dashboard UI."""
+    html = Path(__file__).parent / "templates" / "usage.html"
+    return HTMLResponse(html.read_text(encoding="utf-8"))
+
+
+@app.get("/usage/data")
+async def usage_data():
+    """Return aggregated token usage and cost data as JSON."""
+    return usage_summary()
 
 
 SYSTEM_PROMPT = [
@@ -276,6 +289,10 @@ async def stream_chat(req: ChatRequest):
             if response_text:
                 history.append({"role": "assistant", "content": response_text})
                 session_save(session_id, history)
+
+            # Persist token usage to SQLite for cost dashboard
+            if has_usage:
+                usage_log(session_id, model, total_input, total_cache_write, total_cache_read, total_output)
 
             done_data = {"type": "done", "session_id": session_id, "model": model}
             if has_usage:
