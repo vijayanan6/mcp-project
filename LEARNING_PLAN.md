@@ -408,6 +408,112 @@ This is the same abstraction used by LangChain, LiteLLM, and every enterprise AI
 
 ---
 
+## Phase 5 — Structured Outputs (2–3 Days)
+**Goal: Get Claude to return reliable JSON instead of prose — critical for any AI feature that feeds data into another system**
+
+- [ ] Understand why unstructured text responses break downstream systems
+- [ ] Use `response_format` / tool use pattern to force structured JSON from Claude
+- [ ] Build a structured output tool in `mcp_server.py` that always returns typed JSON
+- [ ] Handle validation — what happens when Claude returns malformed JSON
+- [ ] Use Pydantic models to validate Claude's output before passing it downstream
+- [ ] Add a structured output example to the existing project (e.g. note creation returns `{title, content, tags}` not plain text)
+
+**Enterprise pattern:** Every AI feature that writes to a database, calls another API, or feeds a UI component needs structured output. Free-form text is only acceptable for chat.
+
+**Success check:** Claude returns validated, typed JSON that can be inserted directly into SQLite without any string parsing
+
+---
+
+## Phase 6 — Guardrails & Content Moderation (3–4 Days)
+**Goal: Add input/output safety layer — required before any enterprise AI app goes to production**
+
+- [ ] Understand the 3 guardrail layers: input filtering, output filtering, tool call validation
+- [ ] Implement input sanitisation — strip control characters, cap message length, block obvious injection attempts
+- [ ] Implement prompt injection detection — flag messages that try to override the system prompt
+- [ ] Implement PII redaction — detect and mask email addresses, phone numbers, credit card numbers in output
+- [ ] Add tool call validation in `mcp_server.py` — never trust Claude's arguments blindly, validate every input
+- [ ] Never expose raw error messages to the user — always return clean, safe error responses
+- [ ] Understand OWASP Top 10 for LLM Applications (published by OWASP, specific to AI)
+
+**Enterprise pattern:** Banks, hospitals, and law firms cannot ship AI features without guardrails. PII leakage and prompt injection are the two most common production AI incidents.
+
+**Success check:** App blocks prompt injection attempts, redacts PII in responses, and validates all tool inputs — with tests proving each case
+
+---
+
+## Phase 7 — pgvector (1–2 Days, alongside PostgreSQL migration)
+**Goal: Replace ChromaDB with vector search inside PostgreSQL — one database instead of two**
+
+- [ ] Understand what `pgvector` is — a PostgreSQL extension that adds a `vector` column type
+- [ ] Enable pgvector on your Cloud SQL PostgreSQL instance (`CREATE EXTENSION vector`)
+- [ ] Migrate `rag.py` from ChromaDB to pgvector — store embeddings as `vector(384)` columns
+- [ ] Run semantic similarity search using `<=>` cosine distance operator in SQL
+- [ ] Compare query performance: ChromaDB vs pgvector at your data size
+- [ ] Understand when to use pgvector (< 1M vectors, existing PostgreSQL) vs dedicated vector DB (Pinecone, Weaviate) at scale
+
+**Enterprise pattern:** Most production teams use pgvector to avoid managing a separate vector database. One database, one backup strategy, one connection pool.
+
+**Success check:** `search_docs` works identically but queries PostgreSQL instead of ChromaDB. ChromaDB dependency removed.
+
+---
+
+## Phase 8 — Multi-Agent Systems (1–2 Weeks)
+**Goal: Build agents that spawn sub-agents, plan multi-step tasks, and hand off work — the fastest-growing area in AI engineering**
+
+### Concepts first
+- [ ] Understand the difference between a tool-using agent (what you built) and a multi-agent system
+- [ ] Understand agent roles: orchestrator (plans + delegates) vs worker (executes a specific task)
+- [ ] Understand how agents communicate — shared state, message passing, tool results
+- [ ] Read Anthropic's guidance on building effective agents
+
+### Build a multi-agent system in your project
+- [ ] Add an "orchestrator" mode to `api.py` — Claude receives a complex task and breaks it into sub-tasks
+- [ ] Build a research agent — given a topic, searches docs, summarises findings, returns structured report
+- [ ] Build a note-taking agent — listens to a task description, creates and organises notes automatically
+- [ ] Implement agent handoff — orchestrator passes context to worker agent and collects result
+- [ ] Handle agent failures — what happens when a sub-agent errors or loops
+
+### Frameworks to explore (pick one)
+- [ ] LangGraph — graph-based agent orchestration, most production-ready
+- [ ] CrewAI — role-based multi-agent, good for learning the concept
+- [ ] Raw Anthropic SDK — build custom, understand the primitives (recommended first)
+
+**Enterprise pattern:** Enterprise AI products in 2025-2026 are moving from single-agent chatbots to multi-agent pipelines. A "research assistant" at a law firm might have 5 agents: retriever, summariser, fact-checker, formatter, reviewer.
+
+**Success check:** One user message triggers an orchestrator that spawns 2+ worker agents, collects their results, and returns a synthesised response
+
+---
+
+## Phase 9 — Second Project (2–4 Weeks)
+**Goal: Prove the skills transfer to a different domain — not another chatbot**
+
+Build something completely different to demonstrate breadth. Pick one:
+
+**Option A — Meeting Transcription + Action Items**
+- Record or upload a meeting audio file
+- Whisper (OpenAI) or Gemini transcribes audio to text
+- Claude extracts action items, owners, and deadlines as structured JSON
+- Saves to SQLite, exportable as markdown
+- Teaches: audio AI, structured outputs, batch processing (not chat)
+
+**Option B — AI Code Reviewer**
+- User pastes code or connects a GitHub repo
+- Claude reviews for bugs, security issues, and style violations
+- Returns structured review: `{severity, file, line, issue, suggestion}`
+- Teaches: structured outputs, GitHub API, diff parsing, multi-turn review workflow
+
+**Option C — Document Summarisation Pipeline**
+- User uploads a folder of PDFs (contracts, reports, research papers)
+- Pipeline processes each doc: chunk → summarise → extract key facts → store
+- Final output: executive summary across all documents
+- Teaches: batch processing, pipeline architecture, async jobs, progress tracking
+
+**Why this matters:** One project = one use case on your portfolio. Two different project types = evidence that the skills transfer, not just familiarity with one codebase.
+
+**Success check:** Second project is on GitHub with its own README. Different domain, different architecture pattern, same underlying AI engineering principles.
+
+---
+
 ## Final Phase — Claude Code Skill / Plugin
 **Goal: Ship a real Claude Code plugin that packages all standards built throughout this project**
 
@@ -496,6 +602,11 @@ Month 3:   React frontend → proper chat UI
 Month 4:   Authentication → multi-user, secure
 2 Weeks:        Multi-model capability — Claude + Gemini + OpenAI + Ollama (free/local) + Groq → model abstraction layer in api.py, provider dropdown in UI, $0 cost on local models
 Month 5+:  Advanced AI → Langfuse, advanced RAG, Vertex AI
+Month 6:   Structured outputs + Guardrails → production-safe AI features
+Month 6:   pgvector → replace ChromaDB, one database for everything
+Month 7+:  Multi-agent systems → orchestrator + worker agents, LangGraph
+Month 8+:  Second project → different domain, proves skills transfer
+Final:     Claude Code plugin → packages everything into a reusable tool
 ```
 
 ---
