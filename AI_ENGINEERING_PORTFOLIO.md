@@ -15,7 +15,7 @@ Browser ──HTTP/SSE──► FastAPI (api.py) ──stdio/JSON-RPC──► M
                            └──► Anthropic API (Claude)      SQLite + ChromaDB
 ```
 
-**GitHub:** [github.com/vijayanan6/mcp-project](https://github.com/vijayanan6/mcp-project)
+**Portfolio:** [github.com/vijayanan6/mcp-project/blob/main/AI_ENGINEERING_PORTFOLIO.md](https://github.com/vijayanan6/mcp-project/blob/main/AI_ENGINEERING_PORTFOLIO.md)
 
 ---
 
