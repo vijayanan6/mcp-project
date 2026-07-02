@@ -36,6 +36,53 @@ Last updated: June 2026
 ## Pre-Docker — Foundation Gaps (1–2 Weeks)
 **Goal: Fill the gaps that every production AI engineer is expected to know**
 
+### Prompt Engineering Fundamentals
+- [ ] Understand system prompt design — how Claude reads and prioritises instructions
+- [ ] Learn few-shot prompting — giving Claude examples inside the prompt to shape behaviour
+- [ ] Learn chain-of-thought prompting — asking Claude to reason step by step before answering
+- [ ] Understand prompt injection — how users can hijack your system prompt and how to defend against it
+- [ ] Practice iterating on prompts and measuring behaviour change
+- [ ] Understand the difference between system prompt, user turn, and assistant turn
+
+**Success check:** Rewrite your system prompt using chain-of-thought and few-shot patterns, then eval the difference in tool selection accuracy
+
+---
+
+### Error Handling & Resilience
+- [ ] Handle Anthropic API rate limit errors (429) with exponential backoff retry
+- [ ] Handle API timeout errors gracefully — return a user-friendly message, not a 500
+- [ ] Handle MCP server crashes — detect and restart automatically
+- [ ] Add fallback behaviour when `search_docs` returns no results
+- [ ] Never let an unhandled exception reach the user — always return a clean error SSE event
+- [ ] Understand circuit breaker pattern — stop calling a failing service temporarily
+
+**Success check:** App handles API rate limits, timeouts, and MCP crashes without crashing or showing raw tracebacks to the user
+
+---
+
+### Security Fundamentals for AI Apps
+- [ ] Understand prompt injection — user input that overrides your system prompt
+- [ ] Sanitise user input before passing to Claude — strip control characters, cap length
+- [ ] Validate all tool inputs in `mcp_server.py` — never trust Claude's arguments blindly
+- [ ] Understand path traversal — already implemented in `read_doc`, understand why it matters
+- [ ] Never expose raw error messages to the browser — they leak implementation details
+- [ ] Understand OWASP Top 10 for AI applications
+
+**Success check:** Can explain 3 AI-specific attack vectors and point to where your app defends against each
+
+---
+
+### Environment Management (dev / staging / prod)
+- [ ] Understand why dev, staging, and prod must be separate environments
+- [ ] Use `.env.development`, `.env.production` with different API keys and DB paths
+- [ ] Never use prod data or credentials in development
+- [ ] Understand environment variables vs secrets management (Secret Manager in GCP)
+- [ ] Add environment name to logs so you always know which environment generated a log line
+
+**Success check:** App runs correctly with a dev `.env` and a prod `.env` — switching between them changes behaviour without code changes
+
+---
+
 ### Testing with pytest
 - [ ] Install pytest and pytest-asyncio (`pip install pytest pytest-asyncio httpx`)
 - [ ] Understand the difference between unit tests and integration tests
@@ -68,6 +115,40 @@ Last updated: June 2026
 - [ ] Test resources and prompts via MCP Inspector
 
 **Success check:** MCP Inspector shows tools + resources + prompts all working
+
+---
+
+### Observability & Logging (Basic — Before Production)
+- [ ] Add structured logging to `api.py` using Python's `logging` module (not `print`)
+- [ ] Log every request: session_id, model used, token count, latency, tool calls
+- [ ] Log every error with full traceback to a log file
+- [ ] Understand the difference between DEBUG, INFO, WARNING, ERROR, CRITICAL log levels
+- [ ] Add request latency tracking — how long does each `/stream` call take?
+- [ ] Explore Langfuse free tier — trace every Claude API call end to end
+
+**Success check:** Every request and error is logged with structured fields. Langfuse shows token usage and latency per conversation turn
+
+---
+
+### Rate Limiting & API Quota Handling
+- [ ] Understand Anthropic's rate limits — requests per minute, tokens per minute, tokens per day
+- [ ] Implement exponential backoff retry on 429 (rate limit) errors
+- [ ] Add a request queue so burst traffic doesn't immediately hit rate limits
+- [ ] Display a user-friendly "Claude is busy, retrying..." message instead of an error
+- [ ] Track token usage per session to warn when approaching limits
+
+**Success check:** App handles a burst of 10 rapid messages gracefully without crashing or showing raw API errors
+
+---
+
+### CI/CD Pipeline
+- [ ] Understand what CI/CD is and why every production team uses it
+- [ ] Set up GitHub Actions workflow that runs `pytest` on every push
+- [ ] Add eval suite to CI — block merge if evals fail
+- [ ] Add a deploy step that pushes to Cloud Run on merge to `main`
+- [ ] Understand the difference between continuous integration and continuous deployment
+
+**Success check:** Pushing to GitHub automatically runs tests + evals. Failing tests block the push
 
 ---
 
