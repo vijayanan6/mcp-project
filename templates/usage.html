@@ -208,6 +208,18 @@
     </table>
   </div>
 
+  <!-- Tool Cost Breakdown -->
+  <div class="section">
+    <div class="section-header">
+      <h2>Cost by Tool</h2>
+      <span style="font-size:0.75rem;color:#475569">which MCP tools are being called and what they cost</span>
+    </div>
+    <table>
+      <thead><tr><th>Tool</th><th>Calls</th><th>Total Cost</th><th>Avg Cost / Call</th><th>Call frequency</th></tr></thead>
+      <tbody id="tool-table"><tr><td colspan="5" class="empty">No tool calls recorded yet.</td></tr></tbody>
+    </table>
+  </div>
+
   <div class="pricing-note">
     <strong>Pricing (estimates only):</strong>
     Haiku — $0.0008/1K input · $0.004/1K output · $0.00008/1K cache read &nbsp;|&nbsp;
@@ -352,6 +364,33 @@
             <td>${badge} <span style="font-size:0.78rem;color:#64748b">${m.model}</span></td>
             <td>${m.requests}</td><td>${fmtCost(m.cost_usd)}</td>
             <td style="width:130px">${pct}%<div class="pct-bar"><div class="pct-fill" style="width:${pct}%;background:${color}"></div></div></td>
+          </tr>`;
+        }).join('');
+
+    // Tool cost table
+    const byTool = data.by_tool || [];
+    const maxToolCalls = Math.max(...byTool.map(t => t.calls), 1);
+    const TOOL_COLORS = {
+      search_docs:        '#38bdf8',
+      read_doc:           '#a78bfa',
+      manage_notes:       '#34d399',
+      index_docs:         '#fbbf24',
+      list_docs:          '#fb923c',
+      calculate:          '#f472b6',
+      get_weather:        '#4ade80',
+      get_current_datetime: '#94a3b8',
+    };
+    document.getElementById('tool-table').innerHTML = byTool.length === 0
+      ? '<tr><td colspan="5" class="empty">No tool calls recorded yet — send a message that uses a tool.</td></tr>'
+      : byTool.map(t => {
+          const color   = TOOL_COLORS[t.tool_name] || '#64748b';
+          const freqPct = Math.round((t.calls / maxToolCalls) * 100);
+          return `<tr>
+            <td><span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${color};margin-right:7px;vertical-align:middle"></span><strong style="font-size:0.85rem">${t.tool_name}</strong></td>
+            <td>${t.calls}</td>
+            <td>${fmtCost(t.cost_usd)}</td>
+            <td style="color:#94a3b8">${fmtCost(t.avg_cost_usd)}</td>
+            <td style="min-width:120px">${freqPct}%<div class="pct-bar" style="margin-top:4px"><div class="pct-fill" style="width:${freqPct}%;background:${color}"></div></div></td>
           </tr>`;
         }).join('');
 

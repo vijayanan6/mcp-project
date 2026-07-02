@@ -282,6 +282,7 @@ async def stream_chat(req: ChatRequest):
 
             # Accumulate usage across all runner turns (one turn per tool round-trip)
             total_input = total_cache_write = total_cache_read = total_output = 0
+            tools_called: list[str] = []
             has_usage = False
             async for msg in runner:
                 if hasattr(msg, "usage") and msg.usage:
@@ -293,6 +294,7 @@ async def stream_chat(req: ChatRequest):
                     has_usage = True
                 for block in msg.content:
                     if block.type == "tool_use":
+                        tools_called.append(block.name)
                         yield f"data: {json.dumps({'type': 'tool', 'name': block.name})}\n\n"
                     elif block.type == "text" and block.text:
                         response_text += block.text
@@ -305,7 +307,7 @@ async def stream_chat(req: ChatRequest):
 
             # Persist token usage to SQLite for cost dashboard
             if has_usage:
-                usage_log(session_id, model, total_input, total_cache_write, total_cache_read, total_output)
+                usage_log(session_id, model, total_input, total_cache_write, total_cache_read, total_output, tools=tools_called)
 
             done_data = {"type": "done", "session_id": session_id, "model": model}
             if has_usage:
