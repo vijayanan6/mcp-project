@@ -1,4 +1,4 @@
-# AI Engineering Portfolio — Vijay Anantaneni
+# Applied AI Engineer — LLM Systems, MCP & RAG | Vijay Anantaneni
 
 **GitHub:** github.com/vijayanan6/mcp-project
 
