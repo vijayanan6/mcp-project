@@ -6,15 +6,18 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ```powershell
 # Install all dependencies
-pip install anthropic[mcp] mcp pymupdf pytesseract pypdf fastapi "uvicorn[standard]" chromadb sentence-transformers
+pip install anthropic[mcp] mcp pymupdf pytesseract pypdf fastapi "uvicorn[standard]" chromadb sentence-transformers python-dotenv httpx
 
 # Run the web app (primary entry point)
-$env:ANTHROPIC_API_KEY = [System.Environment]::GetEnvironmentVariable("ANTHROPIC_API_KEY", "User")
 python -m uvicorn api:app --reload --port 8000
 # Open: http://localhost:8000
 
 # Run the CLI agent (original learning version)
 python agent.py
+
+# Run eval pipeline (WARNING: consumes API credits — 1 Claude API call per test case)
+# Start the app first, then in a second terminal:
+python evals/run_evals.py
 
 # Convert scanned PDFs in docs/ to .txt using Tesseract OCR
 python convert_pdfs.py
@@ -100,6 +103,15 @@ git push origin main
 
 Commit prefix conventions: `feat:` new feature — `docs:` documentation — `fix:` bug fix
 
+## Eval Pipeline
+
+`evals/dataset.json` — 12 test cases covering tool selection and model routing
+`evals/run_evals.py` — runner that calls `/chat`, scores results, exits 1 on failure
+
+Currently passing: **12/12 (100%)**
+
+Run after every system prompt change or model routing change to catch regressions.
+
 ## Documentation Files
 
 | File | Purpose |
@@ -110,6 +122,7 @@ Commit prefix conventions: `feat:` new feature — `docs:` documentation — `fi
 | `INSIGHTS.md` | Key lessons and principles |
 | `TUTORIAL.md` | Beginner teaching guide with exercises |
 | `GIT_COMMANDS.md` | All Git commands used with explanations |
+| `AI_ENGINEERING_PORTFOLIO.md` | LinkedIn/GitHub portfolio of skills |
 
 ## Key Dependencies
 
@@ -124,3 +137,5 @@ Commit prefix conventions: `feat:` new feature — `docs:` documentation — `fi
 | `pytesseract` | Python wrapper for Tesseract OCR |
 | `chromadb` | Vector database for semantic search |
 | `sentence-transformers` | Local embedding model (all-MiniLM-L6-v2) |
+| `python-dotenv` | Loads `.env` file into environment variables |
+| `httpx` | HTTP client used by eval runner and Anthropic SDK |
