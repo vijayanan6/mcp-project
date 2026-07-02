@@ -296,6 +296,95 @@ code.claude.com/docs/en/plugins-reference.md (schema)
 
 ---
 
+## Phase 3.5 — Multi-Model Capability (2 Weeks)
+**Goal: Make the existing MCP project run on any LLM — Claude, Gemini, OpenAI, or a free local model. Close the one-project one-provider gap.**
+
+### The Pattern — Model Abstraction Layer
+The MCP server doesn't care what model calls it. Tools are provider-agnostic.
+Only `api.py` needs to change. The abstraction goes in a new `model_client.py`:
+
+```
+api.py → model_client.py → Claude   (Anthropic SDK)
+                         → Gemini   (google-generativeai SDK)
+                         → OpenAI   (openai SDK)
+                         → Ollama   (local, free, offline)
+                         → Groq     (free tier, fast inference)
+```
+
+Switch provider via `.env`:
+```
+LLM_PROVIDER=claude      # or gemini, openai, ollama, groq
+LLM_MODEL=claude-sonnet-4-6
+```
+
+---
+
+### Week 1 — Provider Familiarity
+
+**Claude (already done ✅)**
+
+**Gemini (primary new provider — build something real)**
+- [ ] Get a Google AI Studio API key (free tier available at aistudio.google.com)
+- [ ] Understand Gemini model family — Flash (fast/cheap), Pro (capable), Ultra (most powerful)
+- [ ] Call Gemini API using `google-generativeai` Python SDK
+- [ ] Use Gemini's multimodal capabilities — send an audio file or video URL, ask questions about it
+- [ ] Compare token pricing, context window, and tool use vs Claude
+- [ ] Understand why Gemini + GCP is the natural pairing (same billing, IAM, Vertex AI)
+
+**Success check:** Gemini answers a question about an audio or video file in a standalone script
+
+---
+
+**OpenAI (one day — familiarity only)**
+- [ ] Get an OpenAI API key
+- [ ] Call the API once using the `openai` Python SDK
+- [ ] Compare SDK syntax to Anthropic (tools, streaming, system prompt structure)
+- [ ] Understand how OpenAI function calling differs from Anthropic tool use
+
+**Success check:** Can call OpenAI API and read an existing OpenAI codebase without being lost
+
+---
+
+**Ollama — free local models (no API cost, runs offline)**
+- [ ] Install Ollama (`winget install Ollama.Ollama`)
+- [ ] Pull a model locally (`ollama pull llama3` or `ollama pull mistral`)
+- [ ] Call Ollama via its REST API (it mimics OpenAI's API format — `POST /api/chat`)
+- [ ] Understand why companies use local models — data privacy, no vendor lock-in, zero API cost at scale
+- [ ] Compare response quality vs Claude on the same question
+
+**Success check:** Ollama runs a model locally and answers a question with zero API cost
+
+---
+
+**Groq — free tier, fastest inference on open models**
+- [ ] Get a Groq API key (free at console.groq.com)
+- [ ] Call Groq API — it uses OpenAI-compatible SDK format
+- [ ] Run Llama 3 or Mixtral via Groq and compare speed vs Claude
+- [ ] Understand Groq's value: open source models at commercial-grade speed
+
+**Success check:** Groq responds to a question faster than Claude on the same input
+
+---
+
+### Week 2 — Wire Multi-Model Into Your Project
+
+- [ ] Create `model_client.py` — abstraction layer with a `chat()` function that accepts `provider`, `model`, `messages`, `tools`
+- [ ] Implement Claude adapter (move existing Anthropic SDK calls here)
+- [ ] Implement Gemini adapter
+- [ ] Implement OpenAI/Groq/Ollama adapter (they share the same SDK format)
+- [ ] Read `LLM_PROVIDER` and `LLM_MODEL` from `.env` at startup
+- [ ] Add a provider selector dropdown to `chat.html` — switch models live from the UI
+- [ ] Update cost dashboard to show cost by provider (Ollama = $0.00, Claude = highest)
+- [ ] Update model routing — `_pick_model()` now routes across providers, not just Haiku vs Sonnet
+- [ ] Add provider name to the `done` SSE event so the UI shows which provider answered
+
+**Enterprise pattern learned:**
+This is the same abstraction used by LangChain, LiteLLM, and every enterprise AI platform. One interface, multiple backends. Swap providers without touching business logic.
+
+**Success check:** The chat UI has a model selector. Switch between Claude, Gemini, and Ollama mid-conversation. Cost dashboard shows $0.00 for Ollama turns. All 8 MCP tools work regardless of which provider is active.
+
+---
+
 ## Phase 4 — Advanced AI Engineering (Weeks 15+)
 **Goal: Build production-grade AI features**
 
@@ -371,6 +460,12 @@ This is the end product of the entire learning journey. Everything built and lea
 
 | Topic | Resource |
 |---|---|
+| Google AI Studio | aistudio.google.com (free Gemini API key) |
+| Gemini SDK | ai.google.dev/gemini-api/docs |
+| OpenAI SDK | platform.openai.com/docs/api-reference |
+| Ollama | ollama.com (run LLMs locally, free) |
+| Groq | console.groq.com (free tier, fast open model inference) |
+| LiteLLM | litellm.ai (multi-provider abstraction library — reference) |
 | MCP Inspector | modelcontextprotocol.io/docs/tools/inspector |
 | pytest | docs.pytest.org |
 | pytest-asyncio | pytest-asyncio.readthedocs.io |
@@ -399,6 +494,7 @@ Interlude: Claude Code Plugin Marketplace (optional) → plugin.json, marketplac
 Month 2:   GCP Services → PostgreSQL, GCS, Secret Manager
 Month 3:   React frontend → proper chat UI
 Month 4:   Authentication → multi-user, secure
+2 Weeks:        Multi-model capability — Claude + Gemini + OpenAI + Ollama (free/local) + Groq → model abstraction layer in api.py, provider dropdown in UI, $0 cost on local models
 Month 5+:  Advanced AI → Langfuse, advanced RAG, Vertex AI
 ```
 
