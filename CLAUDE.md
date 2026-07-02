@@ -63,9 +63,17 @@ Browser ──HTTP/SSE──► api.py ──stdio/JSON-RPC──► mcp_server.
 2. Add an `if name == "tool_name":` handler in `call_tool()` returning `list[types.TextContent]`
 3. Restart `api.py` — tool discovery is automatic on each session start
 
+## Cost Dashboard & Credit Tracking
+
+`GET  /usage`         — visual HTML dashboard (token usage, cost, daily chart, per-session table)
+`GET  /usage/data`    — JSON: totals, by_model, by_day, by_session, credit config
+`POST /usage/credit`  — save starting balance and alert threshold `{ starting_balance: 5.00, alert_threshold: 1.00 }`
+
+Features: credit balance tracker, burn rate ($/day), days remaining, per-session cost table, low-credit alert badge in chat header (pulses red when remaining < threshold).
+
 ## Persistence
 
-- **SQLite** (`data.db`) — notes table + sessions table. Managed by `database.py`. Auto-created on startup.
+- **SQLite** (`data.db`) — notes, sessions, usage_logs, credit_config tables. Managed by `database.py`. Auto-created on startup.
 - **ChromaDB** (`chroma_db/`) — vector embeddings for semantic doc search. Managed by `rag.py`. Auto-indexed on `api.py` startup.
 - Both `data.db` and `chroma_db/` are in `.gitignore` — local only.
 

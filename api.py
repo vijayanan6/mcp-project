@@ -31,7 +31,7 @@ from anthropic import AsyncAnthropic
 from anthropic.lib.tools.mcp import async_mcp_tool
 from mcp import ClientSession
 from mcp.client.stdio import StdioServerParameters, stdio_client
-from database import init_db, session_get, session_save, session_list, session_delete, usage_log, usage_summary
+from database import init_db, session_get, session_save, session_list, session_delete, usage_log, usage_summary, credit_get, credit_set
 
 SERVER_SCRIPT = str(Path(__file__).parent / "mcp_server.py")
 
@@ -137,8 +137,21 @@ async def usage_dashboard():
 
 @app.get("/usage/data")
 async def usage_data():
-    """Return aggregated token usage and cost data as JSON."""
-    return usage_summary()
+    """Return aggregated token usage, cost data, and credit config as JSON."""
+    data = usage_summary()
+    data["credit"] = credit_get()
+    return data
+
+
+class CreditRequest(BaseModel):
+    starting_balance: float
+    alert_threshold: float = 1.0
+
+@app.post("/usage/credit")
+async def save_credit(req: CreditRequest):
+    """Save the user's starting Anthropic credit balance."""
+    credit_set(req.starting_balance, req.alert_threshold)
+    return {"saved": True, "starting_balance": req.starting_balance}
 
 
 SYSTEM_PROMPT = [

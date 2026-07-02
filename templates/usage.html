@@ -8,28 +8,52 @@
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #0f172a; color: #e2e8f0; min-height: 100vh; padding: 28px 24px; }
 
-    /* Header */
-    .header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 28px; }
+    .header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 28px; flex-wrap: wrap; gap: 12px; }
     .header-left h1 { font-size: 1.4rem; font-weight: 700; color: #f8fafc; }
     .header-left p { color: #64748b; font-size: 0.8rem; margin-top: 2px; }
     .header-left p a { color: #38bdf8; text-decoration: none; }
-    .refresh-btn { background: #1e293b; border: 1px solid #334155; color: #cbd5e1; padding: 8px 18px; border-radius: 8px; cursor: pointer; font-size: 0.82rem; transition: background 0.15s; }
+    .refresh-btn { background: #1e293b; border: 1px solid #334155; color: #cbd5e1; padding: 8px 18px; border-radius: 8px; cursor: pointer; font-size: 0.82rem; }
     .refresh-btn:hover { background: #334155; }
 
+    /* Credit setup banner */
+    .credit-banner { background: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 20px 24px; margin-bottom: 24px; display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+    .credit-banner.alert { border-color: #ef4444; background: #1a0f0f; }
+    .credit-banner.warning { border-color: #f59e0b; background: #1a150a; }
+    .credit-banner label { font-size: 0.82rem; color: #94a3b8; white-space: nowrap; }
+    .credit-banner input { background: #0f172a; border: 1px solid #334155; color: #f8fafc; padding: 7px 12px; border-radius: 7px; font-size: 0.9rem; width: 120px; }
+    .credit-banner input:focus { outline: none; border-color: #38bdf8; }
+    .credit-banner button { background: #38bdf8; color: #0f172a; border: none; padding: 8px 18px; border-radius: 7px; font-size: 0.82rem; font-weight: 700; cursor: pointer; }
+    .credit-banner button:hover { background: #7dd3fc; }
+    .credit-info { display: flex; gap: 24px; flex-wrap: wrap; }
+    .credit-stat { display: flex; flex-direction: column; gap: 2px; }
+    .credit-stat .cs-label { font-size: 0.72rem; color: #64748b; text-transform: uppercase; }
+    .credit-stat .cs-value { font-size: 1.1rem; font-weight: 700; color: #f8fafc; }
+    .credit-stat .cs-value.green { color: #34d399; }
+    .credit-stat .cs-value.red { color: #ef4444; }
+    .credit-stat .cs-value.yellow { color: #fbbf24; }
+
+    /* Credit progress bar */
+    .credit-progress-wrap { width: 100%; }
+    .credit-progress-label { display: flex; justify-content: space-between; font-size: 0.75rem; color: #64748b; margin-bottom: 6px; }
+    .credit-progress-bg { background: #0f172a; border-radius: 6px; height: 10px; overflow: hidden; }
+    .credit-progress-fill { height: 10px; border-radius: 6px; transition: width 0.6s ease; }
+
     /* Summary cards */
-    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 14px; margin-bottom: 24px; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(155px, 1fr)); gap: 14px; margin-bottom: 24px; }
     .card { background: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 18px 20px; position: relative; overflow: hidden; }
     .card::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px; }
     .card.blue::before { background: #38bdf8; }
     .card.green::before { background: #34d399; }
     .card.yellow::before { background: #fbbf24; }
     .card.purple::before { background: #a78bfa; }
+    .card.red::before { background: #ef4444; }
     .card .label { font-size: 0.72rem; color: #64748b; text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 10px; }
     .card .value { font-size: 1.8rem; font-weight: 700; color: #f8fafc; line-height: 1; }
     .card.blue .value { color: #38bdf8; }
     .card.green .value { color: #34d399; }
     .card.yellow .value { color: #fbbf24; }
     .card.purple .value { color: #a78bfa; }
+    .card.red .value { color: #ef4444; }
     .card .sub { font-size: 0.72rem; color: #475569; margin-top: 6px; }
 
     /* Sections */
@@ -37,30 +61,31 @@
     .section-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; }
     .section-header h2 { font-size: 0.95rem; font-weight: 600; color: #cbd5e1; }
 
-    /* Donut chart */
-    .chart-row { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-bottom: 20px; }
+    .chart-row { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 20px; }
+    @media (max-width: 700px) { .chart-row { grid-template-columns: 1fr; } }
+
+    /* Donut */
     .donut-wrap { display: flex; align-items: center; gap: 24px; }
-    .donut-wrap svg { flex-shrink: 0; }
     .legend { display: flex; flex-direction: column; gap: 10px; }
     .legend-item { display: flex; align-items: center; gap: 8px; font-size: 0.82rem; }
     .legend-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
 
-    /* Token breakdown bar */
-    .token-bar-wrap { margin-bottom: 6px; }
+    /* Token bars */
+    .token-bar-wrap { margin-bottom: 14px; }
     .token-bar-label { display: flex; justify-content: space-between; font-size: 0.78rem; color: #94a3b8; margin-bottom: 5px; }
     .token-bar-bg { background: #0f172a; border-radius: 6px; height: 8px; overflow: hidden; }
     .token-bar-fill { height: 8px; border-radius: 6px; transition: width 0.6s ease; }
 
     /* Daily chart */
-    .daily-chart { display: flex; align-items: flex-end; gap: 6px; height: 80px; margin-bottom: 12px; }
+    .daily-chart { display: flex; align-items: flex-end; gap: 6px; height: 80px; margin-bottom: 8px; }
     .day-bar-wrap { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px; height: 100%; justify-content: flex-end; }
-    .day-bar { width: 100%; background: #38bdf8; border-radius: 3px 3px 0 0; min-height: 2px; transition: height 0.5s ease; position: relative; }
-    .day-bar:hover::after { content: attr(data-tip); position: absolute; bottom: 110%; left: 50%; transform: translateX(-50%); background: #0f172a; border: 1px solid #334155; color: #e2e8f0; font-size: 0.7rem; padding: 4px 8px; border-radius: 4px; white-space: nowrap; pointer-events: none; }
-    .day-label { font-size: 0.62rem; color: #475569; text-align: center; }
+    .day-bar { width: 100%; background: #38bdf8; border-radius: 3px 3px 0 0; min-height: 2px; position: relative; cursor: pointer; }
+    .day-bar:hover::after { content: attr(data-tip); position: absolute; bottom: 110%; left: 50%; transform: translateX(-50%); background: #0f172a; border: 1px solid #334155; color: #e2e8f0; font-size: 0.7rem; padding: 4px 8px; border-radius: 4px; white-space: nowrap; pointer-events: none; z-index: 10; }
+    .day-label { font-size: 0.62rem; color: #475569; }
 
-    /* Table */
+    /* Tables */
     table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
-    th { text-align: left; color: #64748b; font-weight: 500; padding: 8px 12px; border-bottom: 1px solid #334155; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.04em; }
+    th { text-align: left; color: #64748b; font-weight: 500; padding: 8px 12px; border-bottom: 1px solid #334155; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.04em; }
     td { padding: 11px 12px; border-bottom: 1px solid #1a2332; color: #cbd5e1; }
     tr:last-child td { border-bottom: none; }
     tr:hover td { background: #162032; }
@@ -68,13 +93,13 @@
     .badge { display: inline-block; padding: 3px 9px; border-radius: 9999px; font-size: 0.7rem; font-weight: 600; }
     .badge.haiku { background: #14532d; color: #4ade80; }
     .badge.sonnet { background: #1e3a5f; color: #38bdf8; }
-
     .pct-bar { background: #0f172a; border-radius: 3px; height: 5px; margin-top: 5px; overflow: hidden; }
     .pct-fill { height: 5px; border-radius: 3px; }
 
-    .empty { color: #475569; text-align: center; padding: 32px; font-size: 0.85rem; }
+    .empty { color: #475569; text-align: center; padding: 28px; font-size: 0.85rem; }
     .pricing-note { background: #0f172a; border: 1px solid #1e293b; border-radius: 8px; padding: 12px 16px; font-size: 0.73rem; color: #475569; margin-top: 4px; line-height: 1.6; }
     .pricing-note strong { color: #64748b; }
+    .session-id { font-family: monospace; font-size: 0.75rem; color: #64748b; max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   </style>
 </head>
 <body>
@@ -87,28 +112,67 @@
     <button class="refresh-btn" onclick="load()">Refresh</button>
   </div>
 
+  <!-- Credit Tracker Banner -->
+  <div class="credit-banner" id="credit-banner">
+    <div style="flex:1;min-width:280px">
+      <div style="font-size:0.85rem;font-weight:600;color:#f8fafc;margin-bottom:12px">Anthropic Credit Tracker</div>
+      <div class="credit-progress-wrap" id="credit-progress-wrap" style="display:none">
+        <div class="credit-progress-label">
+          <span id="cp-spent">$0.0000 spent</span>
+          <span id="cp-remaining">$0.00 remaining</span>
+        </div>
+        <div class="credit-progress-bg">
+          <div class="credit-progress-fill" id="cp-bar" style="width:0%;background:#34d399"></div>
+        </div>
+      </div>
+      <div style="margin-top:12px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        <label>Starting balance (USD):</label>
+        <input type="number" id="credit-input" placeholder="e.g. 5.00" step="0.01" min="0" />
+        <label style="margin-left:8px">Alert below:</label>
+        <input type="number" id="alert-input" placeholder="e.g. 1.00" step="0.10" min="0" style="width:90px" />
+        <button onclick="saveCredit()">Save</button>
+      </div>
+    </div>
+    <div class="credit-info" id="credit-info" style="display:none">
+      <div class="credit-stat">
+        <span class="cs-label">Remaining</span>
+        <span class="cs-value green" id="ci-remaining">—</span>
+      </div>
+      <div class="credit-stat">
+        <span class="cs-label">Total Spent</span>
+        <span class="cs-value" id="ci-spent">—</span>
+      </div>
+      <div class="credit-stat">
+        <span class="cs-label">Burn Rate</span>
+        <span class="cs-value yellow" id="ci-burnrate">—</span>
+      </div>
+      <div class="credit-stat">
+        <span class="cs-label">Days Left</span>
+        <span class="cs-value green" id="ci-daysleft">—</span>
+      </div>
+    </div>
+  </div>
+
   <!-- Summary Cards -->
   <div class="grid">
     <div class="card blue"><div class="label">Total Requests</div><div class="value" id="total-requests">—</div></div>
-    <div class="card green"><div class="label">Estimated Cost</div><div class="value" id="total-cost">—</div><div class="sub">USD since first use</div></div>
+    <div class="card green"><div class="label">Total Spent</div><div class="value" id="total-cost">—</div><div class="sub">USD estimated</div></div>
     <div class="card yellow"><div class="label">Cache Savings</div><div class="value" id="cache-savings">—</div><div class="sub">vs no prompt caching</div></div>
-    <div class="card purple"><div class="label">Cache Hit Rate</div><div class="value" id="cache-hit-rate">—</div><div class="sub">of input tokens cached</div></div>
+    <div class="card purple"><div class="label">Cache Hit Rate</div><div class="value" id="cache-hit-rate">—</div></div>
     <div class="card blue"><div class="label">Input Tokens</div><div class="value" id="total-input">—</div></div>
     <div class="card blue"><div class="label">Output Tokens</div><div class="value" id="total-output">—</div></div>
   </div>
 
   <!-- Token Breakdown + Model Split -->
   <div class="chart-row">
-
     <div class="section">
       <div class="section-header"><h2>Token Breakdown</h2></div>
       <div id="token-bars"><div class="empty">No data yet.</div></div>
     </div>
-
     <div class="section">
       <div class="section-header"><h2>Cost by Model</h2></div>
       <div class="donut-wrap">
-        <svg width="100" height="100" viewBox="0 0 100 100" id="donut-svg">
+        <svg width="100" height="100" viewBox="0 0 100 100" id="donut-svg" style="flex-shrink:0">
           <circle cx="50" cy="50" r="38" fill="none" stroke="#1a2332" stroke-width="18"/>
           <circle id="donut-haiku" cx="50" cy="50" r="38" fill="none" stroke="#4ade80" stroke-width="18"
             stroke-dasharray="0 239" stroke-dashoffset="60" transform="rotate(-90 50 50)" style="transition:stroke-dasharray 0.6s"/>
@@ -120,14 +184,22 @@
         <div class="legend" id="model-legend"><div class="empty" style="padding:0;font-size:0.8rem">No data yet.</div></div>
       </div>
     </div>
-
   </div>
 
-  <!-- Daily Usage Chart -->
+  <!-- Daily Bar Chart -->
   <div class="section">
     <div class="section-header"><h2>Daily Usage — last 14 days</h2></div>
     <div class="daily-chart" id="daily-chart"><div class="empty" style="width:100%">No data yet.</div></div>
     <div style="display:flex;gap:6px;margin-top:4px" id="daily-labels"></div>
+  </div>
+
+  <!-- Per-Session Cost -->
+  <div class="section">
+    <div class="section-header"><h2>Top 10 Sessions by Cost</h2></div>
+    <table>
+      <thead><tr><th>Session ID</th><th>Requests</th><th>Cost (USD)</th><th>Last Active</th></tr></thead>
+      <tbody id="session-table"><tr><td colspan="4" class="empty">No data yet.</td></tr></tbody>
+    </table>
   </div>
 
   <!-- Model Table -->
@@ -147,7 +219,7 @@
   </div>
 
 <script>
-  const COLORS = { haiku: '#4ade80', sonnet: '#38bdf8', input: '#38bdf8', cache_write: '#fbbf24', cache_read: '#34d399', output: '#a78bfa' };
+  const COLORS = { haiku:'#4ade80', sonnet:'#38bdf8', input:'#38bdf8', cache_write:'#fbbf24', cache_read:'#34d399', output:'#a78bfa' };
 
   function fmt(n) {
     if (!n) return '0';
@@ -155,67 +227,108 @@
     if (n >= 1000) return (n/1000).toFixed(1)+'K';
     return String(n);
   }
-
   function fmtCost(v) { return '$'+(v||0).toFixed(4); }
+  function fmtDate(s) { return s ? s.slice(0,10) : '—'; }
+
+  async function saveCredit() {
+    const bal = parseFloat(document.getElementById('credit-input').value);
+    const thr = parseFloat(document.getElementById('alert-input').value) || 1.0;
+    if (isNaN(bal) || bal <= 0) { alert('Enter a valid starting balance.'); return; }
+    await fetch('/usage/credit', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({starting_balance: bal, alert_threshold: thr}) });
+    load();
+  }
 
   async function load() {
     const data = await fetch('/usage/data').then(r=>r.json());
     const t = data.totals || {};
-    const byModel = data.by_model || [];
-    const byDay   = data.by_day   || [];
+    const byModel   = data.by_model   || [];
+    const byDay     = data.by_day     || [];
+    const bySession = data.by_session || [];
+    const credit    = data.credit     || {};
+
+    // Credit banner
+    const startBal  = credit.starting_balance || 0;
+    const alertThr  = credit.alert_threshold  || 1.0;
+    const spent     = t.total_cost_usd || 0;
+    const remaining = Math.max(startBal - spent, 0);
+    const usedPct   = startBal > 0 ? Math.min((spent / startBal) * 100, 100) : 0;
+
+    if (startBal > 0) {
+      document.getElementById('credit-input').value  = startBal.toFixed(2);
+      document.getElementById('alert-input').value   = alertThr.toFixed(2);
+      document.getElementById('credit-progress-wrap').style.display = 'block';
+      document.getElementById('credit-info').style.display = 'flex';
+
+      document.getElementById('cp-spent').textContent     = fmtCost(spent) + ' spent';
+      document.getElementById('cp-remaining').textContent = '$' + remaining.toFixed(2) + ' remaining';
+
+      const bar = document.getElementById('cp-bar');
+      bar.style.width = usedPct + '%';
+      bar.style.background = remaining <= alertThr ? '#ef4444' : remaining <= alertThr * 2 ? '#f59e0b' : '#34d399';
+
+      document.getElementById('ci-spent').textContent    = fmtCost(spent);
+      const remEl = document.getElementById('ci-remaining');
+      remEl.textContent = '$' + remaining.toFixed(4);
+      remEl.className   = 'cs-value ' + (remaining <= alertThr ? 'red' : remaining <= alertThr*2 ? 'yellow' : 'green');
+
+      // Burn rate from daily data
+      const days = byDay.length || 1;
+      const totalDays = Math.max(days, 1);
+      const burnPerDay = spent / totalDays;
+      document.getElementById('ci-burnrate').textContent = fmtCost(burnPerDay) + '/day';
+      const daysLeft = burnPerDay > 0 ? Math.floor(remaining / burnPerDay) : '∞';
+      const dlEl = document.getElementById('ci-daysleft');
+      dlEl.textContent = daysLeft;
+      dlEl.className   = 'cs-value ' + (typeof daysLeft === 'number' && daysLeft < 7 ? 'red' : typeof daysLeft === 'number' && daysLeft < 14 ? 'yellow' : 'green');
+
+      // Banner alert styling
+      const banner = document.getElementById('credit-banner');
+      banner.className = 'credit-banner' + (remaining <= alertThr ? ' alert' : remaining <= alertThr*2 ? ' warning' : '');
+    }
 
     if (!t.total_requests) return;
 
     // Cards
     document.getElementById('total-requests').textContent = t.total_requests;
-    document.getElementById('total-cost').textContent = fmtCost(t.total_cost_usd);
-    document.getElementById('total-input').textContent = fmt(t.total_input);
-    document.getElementById('total-output').textContent = fmt(t.total_output);
+    document.getElementById('total-cost').textContent     = fmtCost(t.total_cost_usd);
+    document.getElementById('total-input').textContent    = fmt(t.total_input);
+    document.getElementById('total-output').textContent   = fmt(t.total_output);
 
     const cacheRead = t.total_cache_read || 0;
-    const avgSavingRate = 0.0018; // avg input rate - avg cache read rate
-    document.getElementById('cache-savings').textContent = fmtCost((cacheRead/1000)*avgSavingRate);
+    document.getElementById('cache-savings').textContent  = fmtCost((cacheRead/1000)*0.0018);
+    const totalIn = (t.total_input||0) + cacheRead;
+    document.getElementById('cache-hit-rate').textContent = totalIn > 0 ? Math.round((cacheRead/totalIn)*100)+'%' : '0%';
 
-    const totalIn = (t.total_input||0) + (t.total_cache_read||0);
-    const hitRate = totalIn > 0 ? Math.round((cacheRead/totalIn)*100) : 0;
-    document.getElementById('cache-hit-rate').textContent = hitRate+'%';
-
-    // Token breakdown bars
+    // Token bars
     const tokenItems = [
-      { label: 'Input', val: t.total_input||0, color: COLORS.input },
-      { label: 'Cache Write', val: t.total_cache_write||0, color: COLORS.cache_write },
-      { label: 'Cache Read', val: t.total_cache_read||0, color: COLORS.cache_read },
-      { label: 'Output', val: t.total_output||0, color: COLORS.output },
+      {label:'Input',       val: t.total_input||0,       color: COLORS.input},
+      {label:'Cache Write', val: t.total_cache_write||0, color: COLORS.cache_write},
+      {label:'Cache Read',  val: t.total_cache_read||0,  color: COLORS.cache_read},
+      {label:'Output',      val: t.total_output||0,      color: COLORS.output},
     ];
     const maxTok = Math.max(...tokenItems.map(i=>i.val), 1);
     document.getElementById('token-bars').innerHTML = tokenItems.map(item => `
-      <div class="token-bar-wrap" style="margin-bottom:14px">
+      <div class="token-bar-wrap">
         <div class="token-bar-label"><span>${item.label}</span><span>${fmt(item.val)}</span></div>
-        <div class="token-bar-bg">
-          <div class="token-bar-fill" style="width:${Math.round((item.val/maxTok)*100)}%;background:${item.color}"></div>
-        </div>
+        <div class="token-bar-bg"><div class="token-bar-fill" style="width:${Math.round((item.val/maxTok)*100)}%;background:${item.color}"></div></div>
       </div>`).join('');
 
-    // Donut chart
+    // Donut
     const totalCost = t.total_cost_usd || 0.0001;
-    const circ = 2 * Math.PI * 38; // ~238.76
+    const circ = 238.76;
     let offset = 60;
-    byModel.forEach((m, i) => {
-      const pct = m.cost_usd / totalCost;
+    ['haiku','sonnet'].forEach(key => document.getElementById('donut-'+key).setAttribute('stroke-dasharray','0 '+circ));
+    byModel.forEach(m => {
+      const pct  = m.cost_usd / totalCost;
       const dash = pct * circ;
-      const color = m.model.includes('haiku') ? COLORS.haiku : COLORS.sonnet;
-      const id = m.model.includes('haiku') ? 'donut-haiku' : 'donut-sonnet';
-      const el = document.getElementById(id);
-      if (el) {
-        el.setAttribute('stroke', color);
-        el.setAttribute('stroke-dasharray', `${dash} ${circ - dash}`);
-        el.setAttribute('stroke-dashoffset', offset);
-        offset -= dash;
-      }
+      const key  = m.model.includes('haiku') ? 'haiku' : 'sonnet';
+      const el   = document.getElementById('donut-'+key);
+      el.setAttribute('stroke-dasharray', `${dash} ${circ-dash}`);
+      el.setAttribute('stroke-dashoffset', offset);
+      offset -= dash;
     });
     document.getElementById('donut-center-val').textContent = fmtCost(totalCost);
 
-    // Legend
     document.getElementById('model-legend').innerHTML = byModel.length === 0
       ? '<div class="empty" style="padding:0;font-size:0.8rem">No data yet.</div>'
       : byModel.map(m => {
@@ -237,39 +350,41 @@
       : byModel.map(m => {
           const pct   = Math.round((m.cost_usd/totalCost)*100);
           const color = m.model.includes('haiku') ? COLORS.haiku : COLORS.sonnet;
-          const badge = m.model.includes('haiku')
-            ? '<span class="badge haiku">Haiku</span>'
-            : '<span class="badge sonnet">Sonnet</span>';
+          const badge = m.model.includes('haiku') ? '<span class="badge haiku">Haiku</span>' : '<span class="badge sonnet">Sonnet</span>';
           return `<tr>
-            <td>${badge} <span style="font-size:0.8rem;color:#64748b">${m.model}</span></td>
-            <td>${m.requests}</td>
-            <td>${fmtCost(m.cost_usd)}</td>
-            <td style="width:140px">
-              ${pct}%
-              <div class="pct-bar"><div class="pct-fill" style="width:${pct}%;background:${color}"></div></div>
-            </td>
+            <td>${badge} <span style="font-size:0.78rem;color:#64748b">${m.model}</span></td>
+            <td>${m.requests}</td><td>${fmtCost(m.cost_usd)}</td>
+            <td style="width:130px">${pct}%<div class="pct-bar"><div class="pct-fill" style="width:${pct}%;background:${color}"></div></div></td>
           </tr>`;
         }).join('');
 
-    // Daily bar chart
+    // Session table
+    document.getElementById('session-table').innerHTML = bySession.length === 0
+      ? '<tr><td colspan="4" class="empty">No data yet.</td></tr>'
+      : bySession.map((s,i) => `<tr>
+          <td><span class="session-id" title="${s.session_id}">#${i+1} ${s.session_id.slice(0,12)}…</span></td>
+          <td>${s.requests}</td>
+          <td>${fmtCost(s.cost_usd)}</td>
+          <td style="font-size:0.78rem;color:#64748b">${fmtDate(s.last_at)}</td>
+        </tr>`).join('');
+
+    // Daily chart
     if (byDay.length > 0) {
       const maxCost = Math.max(...byDay.map(d=>d.cost_usd), 0.0001);
       const reversed = [...byDay].reverse();
       document.getElementById('daily-chart').innerHTML = reversed.map(d => {
         const h = Math.max(Math.round((d.cost_usd/maxCost)*76), 2);
-        const shortDate = d.day.slice(5); // MM-DD
         return `<div class="day-bar-wrap">
           <div class="day-bar" style="height:${h}px" data-tip="${d.day}: ${fmtCost(d.cost_usd)} · ${d.requests} req"></div>
         </div>`;
       }).join('');
       document.getElementById('daily-labels').innerHTML = reversed.map(d =>
-        `<div class="day-label" style="flex:1">${d.day.slice(5)}</div>`
+        `<div class="day-label" style="flex:1;text-align:center">${d.day.slice(5)}</div>`
       ).join('');
     }
   }
 
   load();
-  // Auto-refresh every 30 seconds
   setInterval(load, 30000);
 </script>
 </body>

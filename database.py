@@ -56,6 +56,14 @@ def init_db() -> None:
                 created_at          TEXT NOT NULL
             )
         """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS credit_config (
+                id                  INTEGER PRIMARY KEY CHECK (id = 1),
+                starting_balance    REAL NOT NULL DEFAULT 0,
+                alert_threshold     REAL NOT NULL DEFAULT 1.0,
+                updated_at          TEXT NOT NULL
+            )
+        """)
         conn.commit()
 
 
@@ -133,11 +141,45 @@ def usage_summary() -> dict:
             LIMIT 14
         """).fetchall()
 
+        by_session = conn.execute("""
+            SELECT session_id,
+                   COUNT(*)                 AS requests,
+                   SUM(estimated_cost_usd)  AS cost_usd,
+                   MIN(created_at)          AS first_at,
+                   MAX(created_at)          AS last_at
+            FROM usage_logs
+            GROUP BY session_id
+            ORDER BY cost_usd DESC
+            LIMIT 10
+        """).fetchall()
+
     return {
         "totals": dict(totals) if totals else {},
         "by_model": [dict(r) for r in by_model],
         "by_day": [dict(r) for r in by_day],
+        "by_session": [dict(r) for r in by_session],
     }
+
+
+# ── Credit Config ─────────────────────────────────────────────────────────────
+
+def credit_get() -> dict:
+    """Return stored credit config or defaults."""
+    with get_connection() as conn:
+        row = conn.execute("SELECT * FROM credit_config WHERE id = 1").fetchone()
+        return dict(row) if row else {"starting_balance": 0.0, "alert_threshold": 1.0}
+
+
+def credit_set(starting_balance: float, alert_threshold: float = 1.0) -> None:
+    """Save or update the starting credit balance and alert threshold."""
+    now = datetime.now().isoformat()
+    with get_connection() as conn:
+        conn.execute("""
+            INSERT INTO credit_config (id, starting_balance, alert_threshold, updated_at)
+            VALUES (1, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET starting_balance = ?, alert_threshold = ?, updated_at = ?
+        """, (starting_balance, alert_threshold, now, starting_balance, alert_threshold, now))
+        conn.commit()
 
 
 # ── Notes CRUD ────────────────────────────────────────────────────────────────
