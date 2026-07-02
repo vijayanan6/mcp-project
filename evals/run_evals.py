@@ -122,9 +122,9 @@ def main():
             results.append(result)
 
             status = f"{GREEN}PASS{RESET}" if result["passed"] else f"{RED}FAIL{RESET}"
-            tool_icon  = "✓" if result.get("tool_pass", True) else "✗"
-            model_icon = "✓" if result.get("model_pass", True) else "✗"
-            notes = f"  ← {result['notes']}" if result.get("notes") else ""
+            tool_icon  = "OK" if result.get("tool_pass", True) else "XX"
+            model_icon = "OK" if result.get("model_pass", True) else "XX"
+            notes = f"  <- {result['notes']}" if result.get("notes") else ""
 
             print(
                 f"{result['id']:<15} "

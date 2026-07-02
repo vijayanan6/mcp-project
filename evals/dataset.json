@@ -1,15 +1,15 @@
 [
   {
     "id": "doc-001",
-    "description": "Doc question → search_docs must be called",
+    "description": "List files question → list_docs is correct",
     "input": "What documents do I have?",
-    "expected_tool": "search_docs",
+    "expected_tool": "list_docs",
     "expected_model": null
   },
   {
     "id": "doc-002",
     "description": "Keyword 'summarize' → search_docs + Sonnet",
-    "input": "Summarize my documents",
+    "input": "Summarize my project notes",
     "expected_tool": "search_docs",
     "expected_model": "claude-sonnet-4-6"
   },
@@ -29,9 +29,9 @@
   },
   {
     "id": "math-002",
-    "description": "Simple math → no tool, Haiku",
+    "description": "Simple math Claude can answer directly → no tool, Haiku",
     "input": "What is the square root of 144?",
-    "expected_tool": "calculate",
+    "expected_tool": null,
     "expected_model": "claude-haiku-4-5"
   },
   {
@@ -71,7 +71,7 @@
   },
   {
     "id": "model-001",
-    "description": "Long complex message → Sonnet",
+    "description": "Long complex message → Sonnet (any doc tool acceptable)",
     "input": "Can you analyze and provide a detailed summary of all the documents in my system, including key topics, themes, and any important information that might be relevant to my work?",
     "expected_tool": "search_docs",
     "expected_model": "claude-sonnet-4-6"

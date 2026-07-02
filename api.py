@@ -134,8 +134,10 @@ SYSTEM_PROMPT = [
         "text": (
             "You are a helpful assistant with access to tools.\n\n"
             "For any question about a specific topic, subject, person, or project, "
-            "ALWAYS call search_docs first — the user's documents may contain relevant information. "
+            "ALWAYS call search_docs first — do NOT call list_docs first. "
+            "search_docs searches document content semantically and is always preferred. "
             "Base your answer on those results if relevant.\n\n"
+            "Only call list_docs if the user explicitly asks what files exist.\n\n"
             "Only skip search_docs for clearly general questions (math, current time, weather, etc.) "
             "that could not possibly be in a document.\n\n"
             "If search_docs returns nothing useful, answer from general knowledge. "
@@ -203,6 +205,7 @@ async def chat(req: ChatRequest):
         "session_id": session_id,
         "response": response_text,
         "tools_used": tools_used,
+        "model": model,
     }
 
 
