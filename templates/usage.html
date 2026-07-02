@@ -77,11 +77,8 @@
     .token-bar-fill { height: 8px; border-radius: 6px; transition: width 0.6s ease; }
 
     /* Daily chart */
-    .daily-chart { display: flex; align-items: flex-end; gap: 6px; height: 80px; margin-bottom: 8px; }
-    .day-bar-wrap { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px; height: 100%; justify-content: flex-end; }
-    .day-bar { width: 100%; background: #38bdf8; border-radius: 3px 3px 0 0; min-height: 2px; position: relative; cursor: pointer; }
-    .day-bar:hover::after { content: attr(data-tip); position: absolute; bottom: 110%; left: 50%; transform: translateX(-50%); background: #0f172a; border: 1px solid #334155; color: #e2e8f0; font-size: 0.7rem; padding: 4px 8px; border-radius: 4px; white-space: nowrap; pointer-events: none; z-index: 10; }
-    .day-label { font-size: 0.62rem; color: #475569; }
+    #daily-svg { width: 100%; overflow: visible; }
+    .chart-tooltip { position: fixed; background: #0f172a; border: 1px solid #334155; color: #e2e8f0; font-size: 0.72rem; padding: 6px 10px; border-radius: 6px; pointer-events: none; display: none; z-index: 100; white-space: nowrap; }
 
     /* Tables */
     table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
@@ -189,8 +186,8 @@
   <!-- Daily Bar Chart -->
   <div class="section">
     <div class="section-header"><h2>Daily Usage — last 14 days</h2></div>
-    <div class="daily-chart" id="daily-chart"><div class="empty" style="width:100%">No data yet.</div></div>
-    <div style="display:flex;gap:6px;margin-top:4px" id="daily-labels"></div>
+    <svg id="daily-svg" height="200"><text x="50%" y="50%" text-anchor="middle" fill="#475569" font-size="13">No data yet.</text></svg>
+    <div class="chart-tooltip" id="chart-tooltip"></div>
   </div>
 
   <!-- Per-Session Cost -->
@@ -368,25 +365,94 @@
           <td style="font-size:0.78rem;color:#64748b">${fmtDate(s.last_at)}</td>
         </tr>`).join('');
 
-    // Daily chart
+    // Daily chart — SVG bar chart with Y-axis, grid lines, value labels, date labels
     if (byDay.length > 0) {
-      const maxCost = Math.max(...byDay.map(d=>d.cost_usd), 0.0001);
+      const svg      = document.getElementById('daily-svg');
+      const tooltip  = document.getElementById('chart-tooltip');
       const reversed = [...byDay].reverse();
-      document.getElementById('daily-chart').innerHTML = reversed.map(d => {
-        const h    = Math.max(Math.round((d.cost_usd/maxCost)*76), 2);
-        const frac = d.cost_usd / maxCost;
-        // dim slate → bright sky-blue based on spend intensity
+      const n        = reversed.length;
+
+      const W = svg.getBoundingClientRect().width || 700;
+      const padL = 54, padR = 12, padT = 28, padB = 44;
+      const chartW = W - padL - padR;
+      const chartH = 130;
+      const totalH  = chartH + padT + padB;
+      svg.setAttribute('height', totalH);
+      svg.setAttribute('viewBox', `0 0 ${W} ${totalH}`);
+
+      const maxCost = Math.max(...reversed.map(d=>d.cost_usd), 0.0001);
+      const niceMax = (() => {
+        const mag = Math.pow(10, Math.floor(Math.log10(maxCost)));
+        const steps = [1,2,2.5,5,10];
+        for (const s of steps) if (s * mag >= maxCost * 1.15) return s * mag;
+        return maxCost * 1.2;
+      })();
+
+      const barW   = Math.max(8, (chartW / n) * 0.55);
+      const slotW  = chartW / n;
+
+      // Grid lines + Y-axis labels
+      const gridCount = 4;
+      let svgHtml = `<line x1="${padL}" y1="${padT}" x2="${padL}" y2="${padT+chartH}" stroke="#1e293b" stroke-width="1"/>`;
+      for (let i = 0; i <= gridCount; i++) {
+        const val = (niceMax / gridCount) * i;
+        const y   = padT + chartH - (val / niceMax) * chartH;
+        svgHtml += `<line x1="${padL}" y1="${y}" x2="${W - padR}" y2="${y}" stroke="#1e293b" stroke-width="1" stroke-dasharray="${i===0?'0':'4,3'}"/>`;
+        svgHtml += `<text x="${padL - 6}" y="${y + 4}" text-anchor="end" fill="#475569" font-size="10">$${val < 0.01 ? val.toFixed(4) : val.toFixed(3)}</text>`;
+      }
+
+      // Bars + value labels + date labels
+      reversed.forEach((d, i) => {
+        const frac  = d.cost_usd / niceMax;
+        const barH  = Math.max(frac * chartH, 2);
+        const x     = padL + i * slotW + slotW / 2;
+        const barX  = x - barW / 2;
+        const barY  = padT + chartH - barH;
+
+        // Colour: dim slate → bright sky-blue
         const r = Math.round(30  + frac * (56  - 30));
         const g = Math.round(58  + frac * (189 - 58));
         const b = Math.round(138 + frac * (248 - 138));
         const color = `rgb(${r},${g},${b})`;
-        return `<div class="day-bar-wrap">
-          <div class="day-bar" style="height:${h}px;background:${color}" data-tip="${d.day}: ${fmtCost(d.cost_usd)} · ${d.requests} req"></div>
-        </div>`;
-      }).join('');
-      document.getElementById('daily-labels').innerHTML = reversed.map(d =>
-        `<div class="day-label" style="flex:1;text-align:center">${d.day.slice(5)}</div>`
-      ).join('');
+
+        const label = d.cost_usd > 0 ? fmtCost(d.cost_usd) : '$0';
+        const dateLabel = d.day.slice(5); // MM-DD
+
+        svgHtml += `<rect class="day-bar-rect" x="${barX}" y="${barY}" width="${barW}" height="${barH}"
+          fill="${color}" rx="3"
+          data-tip="${d.day}  ${fmtCost(d.cost_usd)} · ${d.requests} req"
+          style="cursor:pointer"/>`;
+
+        // Value above bar
+        svgHtml += `<text x="${x}" y="${barY - 5}" text-anchor="middle" fill="#94a3b8" font-size="9.5" font-weight="500">${label}</text>`;
+
+        // Date below axis
+        svgHtml += `<text x="${x}" y="${padT + chartH + 14}" text-anchor="middle" fill="#64748b" font-size="10">${dateLabel}</text>`;
+
+        // Dot on top of bar
+        svgHtml += `<circle cx="${x}" cy="${barY}" r="3" fill="${color}" stroke="#0f172a" stroke-width="1.5"/>`;
+      });
+
+      // Line connecting dots
+      const points = reversed.map((d, i) => {
+        const x = padL + i * slotW + slotW / 2;
+        const y = padT + chartH - Math.max((d.cost_usd / niceMax) * chartH, 2);
+        return `${x},${y}`;
+      }).join(' ');
+      svgHtml = `<polyline points="${points}" fill="none" stroke="#334155" stroke-width="1.5" stroke-dasharray="3,3"/>` + svgHtml;
+
+      svg.innerHTML = svgHtml;
+
+      // Tooltip on hover
+      svg.querySelectorAll('.day-bar-rect').forEach(el => {
+        el.addEventListener('mousemove', e => {
+          tooltip.textContent = el.dataset.tip;
+          tooltip.style.display = 'block';
+          tooltip.style.left = (e.clientX + 12) + 'px';
+          tooltip.style.top  = (e.clientY - 28) + 'px';
+        });
+        el.addEventListener('mouseleave', () => { tooltip.style.display = 'none'; });
+      });
     }
   }
 
