@@ -95,15 +95,15 @@ Last updated: June 2026
 
 ---
 
-### Prompt Evaluation (Evals)
-- [ ] Understand what evals are and why they differ from unit tests
-- [ ] Build an eval dataset (JSON) covering system prompt instructions — tool selection, model routing, edge cases
-- [ ] Write an eval runner that scores tool selection (did Claude call the right tool?)
+### Prompt Evaluation (Evals) ✅
+- [x] Understand what evals are and why they differ from unit tests
+- [x] Build an eval dataset (JSON) covering system prompt instructions — tool selection, model routing, edge cases
+- [x] Write an eval runner that scores tool selection (did Claude call the right tool?)
+- [x] Run evals after every system prompt change to catch regressions
 - [ ] Implement LLM-as-judge to score open-ended response quality
-- [ ] Run evals after every system prompt change to catch regressions
 - [ ] Explore Promptfoo (open source) as an eval framework
 
-**Success check:** Eval suite runs automatically, scores tool selection accuracy and model routing correctness across 20+ test cases
+**Result: 12/12 (100%) passing — evals/dataset.json + evals/run_evals.py**
 
 ---
 

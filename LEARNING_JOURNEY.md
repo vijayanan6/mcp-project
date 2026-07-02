@@ -550,6 +550,70 @@ runner = app.state.client.beta.messages.tool_runner(
 
 ---
 
+## Phase 12 — Eval Pipeline
+
+### What We Built
+A complete prompt evaluation pipeline — `evals/dataset.json` (12 test cases) and `evals/run_evals.py` (runner script) that tests whether Claude follows system prompt rules and model routing logic.
+
+### Key Concepts Learned
+
+**What evals test vs what unit tests test**
+- Unit tests catch bugs in *your code* (does `_pick_model()` return the right string?)
+- Evals catch failures in *Claude's behaviour* (does Claude actually use Haiku for simple queries?)
+- Both are necessary — they test different failure modes
+
+**Eval-driven development loop**
+- Write test cases with expected behaviour
+- Run evals → see failures
+- Diagnose: is it a bug in code, a wrong expectation, or a prompt issue?
+- Fix the right thing → rerun → repeat
+- This is how enterprise teams maintain LLM behaviour after every change
+
+**Dataset quality matters**
+- Wrong test expectations are as harmful as wrong code
+- "What documents do I have?" correctly calls `list_docs`, not `search_docs`
+- "Square root of 144" — Claude answers directly without `calculate` tool (correct)
+- Evals revealed these misunderstandings and forced clearer thinking about tool boundaries
+
+**Real bugs found by evals**
+- `/chat` endpoint was not returning `model` in the response — discovered by evals, not manual testing
+- System prompt was not explicit enough about when to use `search_docs` vs `list_docs`
+- Both were fixed because evals gave objective pass/fail evidence
+
+**Cost awareness**
+- Each eval case makes a real Claude API call — 12 cases = 12 API calls
+- In CI/CD, evals run on every push — cost must be considered when sizing the dataset
+- Use mock responses for fast/cheap unit tests; save real API calls for evals that test behaviour
+
+### Files Created
+- `evals/dataset.json` — 12 test cases covering tool selection and model routing
+- `evals/run_evals.py` — runner that calls `/chat`, scores results, reports pass/fail
+
+### Eval Run Results
+```
+Score: 12/12 (100%) — All evals passed!
+Average latency: 6368ms per request
+
+Cases covered:
+  doc questions    → search_docs called (Sonnet)
+  file listing     → list_docs called
+  math/greetings   → no doc tool (Haiku)
+  notes            → manage_notes called
+  weather          → get_weather called (Haiku)
+  long messages    → Sonnet model selected
+```
+
+### How to Run
+```powershell
+# Start the app first
+python -m uvicorn api:app --port 8000
+
+# Run evals (WARNING: consumes API credits — 1 credit per test case)
+python evals/run_evals.py
+```
+
+---
+
 ## Final Architecture
 
 ```

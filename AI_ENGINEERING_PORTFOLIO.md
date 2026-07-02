@@ -151,6 +151,32 @@ Multi-turn sessions stored in SQLite. Full history saved to DB; only the last 10
 
 ---
 
+### 10. Prompt Evaluation Pipeline
+
+Built an eval pipeline to verify Claude follows system prompt rules — not manually, but automatically with a scored pass/fail report.
+
+```
+evals/dataset.json   → 12 test cases (expected tool + expected model per input)
+evals/run_evals.py   → calls /chat, scores tool selection + model routing, reports %
+```
+
+**Result: 12/12 (100%) passing**
+
+```
+doc-001   List files → list_docs       OK  OK   PASS
+doc-002   Summarize  → search_docs     OK  OK   PASS
+math-001  Math       → no tool, Haiku  OK  OK   PASS
+notes-001 Save note  → manage_notes    OK  OK   PASS
+...
+Score: 12/12 (100%) — All evals passed!
+```
+
+Evals caught two real bugs that manual testing missed:
+- `/chat` endpoint was not returning the `model` field in its response
+- System prompt was ambiguous about `search_docs` vs `list_docs`
+
+---
+
 ## Key Engineering Decisions
 
 | Decision | Why |
@@ -192,11 +218,11 @@ Claude Code changes how engineering work gets done — not by replacing engineer
 Using Claude Code throughout this project means every decision — from database choice to token optimization to security — was made with AI-assisted reasoning, then verified against the running code.
 
 ---
-
+                                                                                                                                                                                                                                          
 ## What's Next
 
 | Phase | Concept |
-|-------|---------|
+|-------|---------|                                                                                                   
 | Testing (pytest) | Unit + integration tests for MCP tools and API endpoints |
 | Docker | Containerisation and portability |
 | PostgreSQL | Production database (replacing SQLite) |
