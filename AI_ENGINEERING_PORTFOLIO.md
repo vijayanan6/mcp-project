@@ -177,8 +177,22 @@ Progress:  ████████░░░░░░░░░░░░  5.6% us
 | Route | Purpose |
 |-------|---------|
 | `GET /usage` | Visual HTML dashboard |
-| `GET /usage/data` | JSON: totals, by_model, by_day, by_session, by_tool, credit config |
+| `GET /usage/data` | JSON: totals, by_model, by_day, by_session, by_tool, by_project, credit config |
+| `GET /usage/data?project=name` | Same but filtered to one project |
 | `POST /usage/credit` | Save starting balance and alert threshold |
+
+**Multi-project support (Option C — multi-tenancy at the data layer):**
+
+Added `project` column to `usage_logs` so multiple AI projects can report to the same dashboard. Dashboard shows a project filter dropdown — switch between projects and all cards, charts, and tables update.
+
+```python
+# Any new project reports with one line
+usage_log(session_id, model, ..., project="my-new-project")
+```
+
+This is the same multi-tenancy pattern used in enterprise SaaS — one database, multiple tenants isolated by a tag column (`org_id` in Salesforce, `account_id` in Stripe, `project` here).
+
+**Upgrade path to Option A (centralised HTTP endpoint):** Deploy dashboard to GCP Cloud Run → expose `POST /usage/log` → any project anywhere reports over HTTP. Option C works locally; Option A works in production.
 
 **Cost by Tool breakdown:**
 
