@@ -1,0 +1,86 @@
+[
+  {
+    "id": "doc-001",
+    "description": "Doc question → search_docs must be called",
+    "input": "What documents do I have?",
+    "expected_tool": "search_docs",
+    "expected_model": null
+  },
+  {
+    "id": "doc-002",
+    "description": "Keyword 'summarize' → search_docs + Sonnet",
+    "input": "Summarize my documents",
+    "expected_tool": "search_docs",
+    "expected_model": "claude-sonnet-4-6"
+  },
+  {
+    "id": "doc-003",
+    "description": "Keyword 'find' → search_docs + Sonnet",
+    "input": "Find information about my project",
+    "expected_tool": "search_docs",
+    "expected_model": "claude-sonnet-4-6"
+  },
+  {
+    "id": "math-001",
+    "description": "Math question → no tool, Haiku",
+    "input": "What is 25 * 4?",
+    "expected_tool": null,
+    "expected_model": "claude-haiku-4-5"
+  },
+  {
+    "id": "math-002",
+    "description": "Simple math → no tool, Haiku",
+    "input": "What is the square root of 144?",
+    "expected_tool": "calculate",
+    "expected_model": "claude-haiku-4-5"
+  },
+  {
+    "id": "greeting-001",
+    "description": "Simple greeting → Haiku, no doc tool",
+    "input": "hi",
+    "expected_tool": null,
+    "expected_model": "claude-haiku-4-5"
+  },
+  {
+    "id": "greeting-002",
+    "description": "Simple question → Haiku",
+    "input": "What time is it?",
+    "expected_tool": "get_current_datetime",
+    "expected_model": "claude-haiku-4-5"
+  },
+  {
+    "id": "notes-001",
+    "description": "Save note → manage_notes called",
+    "input": "Save a note titled 'test' with content 'eval test'",
+    "expected_tool": "manage_notes",
+    "expected_model": null
+  },
+  {
+    "id": "notes-002",
+    "description": "List notes → manage_notes called",
+    "input": "List all my notes",
+    "expected_tool": "manage_notes",
+    "expected_model": null
+  },
+  {
+    "id": "weather-001",
+    "description": "Weather question → get_weather called, Haiku",
+    "input": "What is the weather in London?",
+    "expected_tool": "get_weather",
+    "expected_model": "claude-haiku-4-5"
+  },
+  {
+    "id": "model-001",
+    "description": "Long complex message → Sonnet",
+    "input": "Can you analyze and provide a detailed summary of all the documents in my system, including key topics, themes, and any important information that might be relevant to my work?",
+    "expected_tool": "search_docs",
+    "expected_model": "claude-sonnet-4-6"
+  },
+  {
+    "id": "model-002",
+    "description": "Short conversational → Haiku",
+    "input": "Thanks!",
+    "expected_tool": null,
+    "expected_model": "claude-haiku-4-5"
+  }
+]
