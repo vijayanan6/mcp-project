@@ -486,6 +486,70 @@ def _safe_window(hist, limit):
 
 ---
 
+## Phase 11 — Configuration, Sampling & Scale Thinking
+
+### What We Built
+- Switched API key management from Windows environment variable to `.env` file using `python-dotenv`
+- Added `temperature=0.3` sampling parameter to both `/chat` and `/stream` endpoints
+
+### Key Concepts Learned
+
+**Environment variable management**
+- Windows user env vars are machine-wide and persist across reboots — fine for personal use but not portable
+- `.env` + `python-dotenv` is the industry standard for Python projects — project-scoped, portable, git-ignored
+- `load_dotenv()` must be called explicitly in each entry point before any `os.getenv()` calls
+- `.env` does not overwrite already-set env vars by default — safe to migrate gradually
+
+**Sampling parameters**
+- `temperature` controls randomness: 0 = deterministic, 1.0 = default (creative), lower = more consistent
+- For tool-using assistants, `temperature=0.3` is the right choice — focused and predictable
+- `top_p` and `top_k` are redundant when temperature is set — Anthropic recommends only tuning one
+- MCP sampling (server-initiated Claude calls) is a separate concept — not needed for single-agent apps
+
+**Database scale decisions**
+- SQLite — single user, local, zero setup, built into Python. Right for this project
+- PostgreSQL — multi-user, concurrent, ACID-compliant. Right for production
+- Redis — in-memory cache on top of PostgreSQL for high-traffic apps (10,000+ concurrent users)
+- The architecture pattern stays the same (`session_get`, `session_save`) — only the storage layer swaps
+
+**Why persistent conversation history matters**
+- Without it, every message is a fresh conversation — Claude has no memory of prior turns
+- With SQLite, history is loaded and sent to Claude with each request, enabling true multi-turn dialogue
+- `HISTORY_LIMIT = 10` caps what's sent to Claude (controls cost) while SQLite stores everything (continuity)
+- This is the same pattern used in enterprise apps — just swap SQLite for PostgreSQL + Redis at scale
+
+**Industry standard Claude Code extensions (surveyed)**
+- MCP servers: GitHub, Playwright, Sentry, Linear, Notion, Slack, Figma
+- Hooks: PreToolUse, PostToolUse, SessionStart, PermissionRequest — automate lifecycle actions
+- Skills: bundled (`/code-review`, `/verify`, `/simplify`) + custom project-specific commands
+- Typical starter stack: GitHub MCP + Playwright + VS Code extension + hooks + 1-2 custom skills
+
+### Changes Made
+```python
+# agent.py and api.py — load .env file at startup
+from dotenv import load_dotenv
+load_dotenv()
+
+# api.py — both /chat and /stream endpoints
+runner = app.state.client.beta.messages.tool_runner(
+    model=model,
+    max_tokens=1024,
+    temperature=0.3,   # added — consistent, focused responses
+    system=SYSTEM_PROMPT,
+    tools=app.state.tools,
+    messages=...,
+)
+```
+
+### Before vs After
+| | Before | After |
+|---|---|---|
+| API key storage | Windows user env var (machine-wide) | `.env` file (project-scoped, portable) |
+| Temperature | 1.0 (Anthropic default) | 0.3 (consistent for tool-using assistant) |
+| Scale knowledge | Knew SQLite | Understands SQLite → PostgreSQL → Redis progression |
+
+---
+
 ## Final Architecture
 
 ```
