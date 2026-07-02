@@ -46,6 +46,7 @@ def init_db() -> None:
         conn.execute("""
             CREATE TABLE IF NOT EXISTS usage_logs (
                 id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+                project             TEXT NOT NULL DEFAULT 'mcp-project',
                 session_id          TEXT NOT NULL,
                 model               TEXT NOT NULL,
                 input_tokens        INTEGER NOT NULL DEFAULT 0,
@@ -57,12 +58,16 @@ def init_db() -> None:
                 created_at          TEXT NOT NULL
             )
         """)
-        # migrate existing databases that predate the tools_used column
-        try:
-            conn.execute("ALTER TABLE usage_logs ADD COLUMN tools_used TEXT NOT NULL DEFAULT '[]'")
-            conn.commit()
-        except Exception:
-            pass
+        # migrate existing databases that predate these columns
+        for col, definition in [
+            ("tools_used", "TEXT NOT NULL DEFAULT '[]'"),
+            ("project",    "TEXT NOT NULL DEFAULT 'mcp-project'"),
+        ]:
+            try:
+                conn.execute(f"ALTER TABLE usage_logs ADD COLUMN {col} {definition}")
+                conn.commit()
+            except Exception:
+                pass
         conn.execute("""
             CREATE TABLE IF NOT EXISTS credit_config (
                 id                  INTEGER PRIMARY KEY CHECK (id = 1),
@@ -98,25 +103,27 @@ def _estimate_cost(model: str, input_tokens: int, cache_write: int, cache_read: 
 
 # ── Usage Logs ────────────────────────────────────────────────────────────────
 
-def usage_log(session_id: str, model: str, input_tokens: int, cache_write: int, cache_read: int, output_tokens: int, tools: list[str] | None = None) -> None:
+def usage_log(session_id: str, model: str, input_tokens: int, cache_write: int, cache_read: int, output_tokens: int, tools: list[str] | None = None, project: str = "mcp-project") -> None:
     """Save token usage for one message turn."""
     cost = _estimate_cost(model, input_tokens, cache_write, cache_read, output_tokens)
     with get_connection() as conn:
         conn.execute(
             """
             INSERT INTO usage_logs
-              (session_id, model, input_tokens, cache_write_tokens, cache_read_tokens, output_tokens, estimated_cost_usd, tools_used, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+              (project, session_id, model, input_tokens, cache_write_tokens, cache_read_tokens, output_tokens, estimated_cost_usd, tools_used, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (session_id, model, input_tokens, cache_write, cache_read, output_tokens, cost, json.dumps(tools or []), datetime.now().isoformat()),
+            (project, session_id, model, input_tokens, cache_write, cache_read, output_tokens, cost, json.dumps(tools or []), datetime.now().isoformat()),
         )
         conn.commit()
 
 
-def usage_summary() -> dict:
-    """Return aggregated usage stats — total tokens, cost, and per-day breakdown."""
+def usage_summary(project: str | None = None) -> dict:
+    """Return aggregated usage stats. Pass project name to filter to one project."""
+    where  = "WHERE project = ?" if project else ""
+    params = (project,)          if project else ()
     with get_connection() as conn:
-        totals = conn.execute("""
+        totals = conn.execute(f"""
             SELECT
                 COUNT(*)                        AS total_requests,
                 SUM(input_tokens)               AS total_input,
@@ -126,57 +133,69 @@ def usage_summary() -> dict:
                 SUM(estimated_cost_usd)         AS total_cost_usd,
                 MIN(created_at)                 AS first_request,
                 MAX(created_at)                 AS last_request
-            FROM usage_logs
-        """).fetchone()
+            FROM usage_logs {where}
+        """, params).fetchone()
 
-        by_model = conn.execute("""
+        by_model = conn.execute(f"""
             SELECT model,
                    COUNT(*)                 AS requests,
                    SUM(estimated_cost_usd)  AS cost_usd
-            FROM usage_logs
+            FROM usage_logs {where}
             GROUP BY model
             ORDER BY cost_usd DESC
-        """).fetchall()
+        """, params).fetchall()
 
-        by_day = conn.execute("""
+        by_day = conn.execute(f"""
             SELECT DATE(created_at)          AS day,
                    COUNT(*)                  AS requests,
                    SUM(estimated_cost_usd)   AS cost_usd
-            FROM usage_logs
+            FROM usage_logs {where}
             GROUP BY day
             ORDER BY day DESC
             LIMIT 14
-        """).fetchall()
+        """, params).fetchall()
 
-        by_session = conn.execute("""
+        by_session = conn.execute(f"""
             SELECT session_id,
                    COUNT(*)                 AS requests,
                    SUM(estimated_cost_usd)  AS cost_usd,
                    MIN(created_at)          AS first_at,
                    MAX(created_at)          AS last_at
-            FROM usage_logs
+            FROM usage_logs {where}
             GROUP BY session_id
             ORDER BY cost_usd DESC
             LIMIT 10
-        """).fetchall()
+        """, params).fetchall()
 
-        by_tool = conn.execute("""
+        by_tool = conn.execute(f"""
             SELECT
                 json_each.value             AS tool_name,
                 COUNT(*)                    AS calls,
                 SUM(ul.estimated_cost_usd)  AS cost_usd,
                 AVG(ul.estimated_cost_usd)  AS avg_cost_usd
             FROM usage_logs ul, json_each(ul.tools_used)
+            {where.replace('WHERE', 'WHERE ul.project = ? AND') if project else ''}
             GROUP BY json_each.value
             ORDER BY calls DESC
+        """, params).fetchall()
+
+        by_project = conn.execute("""
+            SELECT project,
+                   COUNT(*)                 AS requests,
+                   SUM(estimated_cost_usd)  AS cost_usd,
+                   MAX(created_at)          AS last_at
+            FROM usage_logs
+            GROUP BY project
+            ORDER BY cost_usd DESC
         """).fetchall()
 
     return {
-        "totals": dict(totals) if totals else {},
-        "by_model": [dict(r) for r in by_model],
-        "by_day": [dict(r) for r in by_day],
+        "totals":     dict(totals) if totals else {},
+        "by_model":   [dict(r) for r in by_model],
+        "by_day":     [dict(r) for r in by_day],
         "by_session": [dict(r) for r in by_session],
-        "by_tool": [dict(r) for r in by_tool],
+        "by_tool":    [dict(r) for r in by_tool],
+        "by_project": [dict(r) for r in by_project],
     }
 
 

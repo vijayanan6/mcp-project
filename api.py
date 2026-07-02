@@ -136,9 +136,9 @@ async def usage_dashboard():
 
 
 @app.get("/usage/data")
-async def usage_data():
+async def usage_data(project: str = None):
     """Return aggregated token usage, cost data, and credit config as JSON."""
-    data = usage_summary()
+    data = usage_summary(project=project)
     data["credit"] = credit_get()
     return data
 
@@ -307,7 +307,7 @@ async def stream_chat(req: ChatRequest):
 
             # Persist token usage to SQLite for cost dashboard
             if has_usage:
-                usage_log(session_id, model, total_input, total_cache_write, total_cache_read, total_output, tools=tools_called)
+                usage_log(session_id, model, total_input, total_cache_write, total_cache_read, total_output, tools=tools_called, project="mcp-project")
 
             done_data = {"type": "done", "session_id": session_id, "model": model}
             if has_usage:
