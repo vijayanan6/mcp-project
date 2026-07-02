@@ -20,6 +20,9 @@ import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+from dotenv import load_dotenv
+load_dotenv()
+
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse, StreamingResponse
 from pydantic import BaseModel
@@ -177,6 +180,7 @@ async def chat(req: ChatRequest):
     runner = app.state.client.beta.messages.tool_runner(
         model=model,
         max_tokens=1024,
+        temperature=0.3,
         system=SYSTEM_PROMPT,
         tools=app.state.tools,
         messages=history[-HISTORY_LIMIT:],
@@ -241,6 +245,7 @@ async def stream_chat(req: ChatRequest):
             runner = app.state.client.beta.messages.tool_runner(
                 model=model,
                 max_tokens=1024,
+                temperature=0.3,
                 system=SYSTEM_PROMPT,
                 tools=app.state.tools,
                 messages=_safe_window(history, HISTORY_LIMIT),

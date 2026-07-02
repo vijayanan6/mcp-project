@@ -314,10 +314,174 @@ git push origin main
 
 ### Commit History
 ```
+701e66f  feat: add model routing — Haiku for simple queries, Sonnet for complex
+a78d36a  fix: harden session history, usage tracking, and UI token display
+932c9f4  feat: reduce token usage and fix Windows SSL issues
 28b7a69  feat: add RAG with ChromaDB for semantic document search
 f45961b  feat: prioritise docs + inspect_db utility
 798a14c  feat: replace in-memory storage with SQLite database
 d9346db  Initial commit - MCP learning project
+```
+
+---
+
+## Phase 8 — Token Optimisation
+
+### What We Built
+Two techniques to reduce the number of tokens sent to Claude on every request:
+prompt caching via `cache_control` and a sliding history window.
+
+### Key Concepts Learned
+- **Prompt caching** — Anthropic can cache a fixed prefix of your input across API calls.
+  Marking the system prompt with `cache_control: {"type": "ephemeral"}` means the prompt
+  tokens are only billed once every ~5 minutes instead of on every turn
+- **Cache read vs cache write** — The first call in a 5-minute window *writes* the cache
+  (billed at 1.25× normal rate). Subsequent calls *read* from it (billed at 0.1× normal rate).
+  That saves ~90% of system-prompt tokens after the first message
+- **History window** — Keeping the full conversation in SQLite but only sending the last
+  N messages to Claude caps the context size so costs don't grow unboundedly
+- **`INSERT OR REPLACE`** — upsert pattern lets us overwrite the session row on every save
+  without checking whether it already exists
+
+### Changes Made
+```python
+# api.py — system prompt with cache_control
+SYSTEM_PROMPT = [
+    {
+        "type": "text",
+        "text": "You are a helpful assistant...",
+        "cache_control": {"type": "ephemeral"},   # Anthropic caches this prefix
+    }
+]
+
+HISTORY_LIMIT = 10  # only last 10 messages sent to Claude; full history stays in SQLite
+```
+
+### Before vs After
+| | Before | After |
+|---|---|---|
+| System prompt tokens | Billed every turn | Billed once per 5-min window |
+| History sent to Claude | Full conversation | Last 10 messages |
+| Context cost growth | Unbounded | Capped |
+
+---
+
+## Phase 9 — Model Routing
+
+### What We Built
+A routing function that sends simple queries to Claude Haiku (faster, cheaper)
+and complex or document-related queries to Claude Sonnet (smarter, more capable).
+
+### Key Concepts Learned
+- **Not all queries need the same model** — "What time is it?" costs the same whether
+  you use Haiku or Sonnet, but Haiku is 10–20× cheaper for simple questions
+- **Signal-based routing** — Rather than asking Claude to classify itself, route on
+  simple heuristics: message length and keyword presence
+- **Keyword signals** — Words like "doc", "search", "summarize", "analyze", "file",
+  "project" reliably indicate the user wants Claude to reason over documents
+- **Length heuristic** — Messages over ~120 characters are almost always substantive
+  questions that benefit from the stronger model
+- The chosen model is passed back to the browser in the `done` SSE event so you can
+  see which model answered each question
+
+### Code Added
+```python
+# api.py
+_COMPLEX_SIGNALS = {
+    "doc", "file", "note", "search", "find", "summarize", "summary",
+    "read", "index", "analyze", "analysis", "report", "content", "folder",
+}
+
+def _pick_model(message: str) -> str:
+    msg = message.lower()
+    if len(message) > 120:
+        return "claude-sonnet-4-6"
+    if any(signal in msg for signal in _COMPLEX_SIGNALS):
+        return "claude-sonnet-4-6"
+    return "claude-haiku-4-5"
+```
+
+### Routing Logic
+```
+Message arrives
+  ↓
+len > 120 chars?  →  Sonnet
+  ↓
+any keyword match?  →  Sonnet
+  ↓
+else  →  Haiku
+```
+
+---
+
+## Phase 10 — Usage Tracking & Session Hardening
+
+### What We Built
+End-to-end token usage visibility in the chat UI, plus two fixes that prevented
+history corruption in edge cases.
+
+### Key Concepts Learned
+- **Multi-turn accumulation** — `tool_runner` makes multiple API calls (one per tool
+  round-trip). Each call has its own `usage` object. You must sum across all of them
+  to get the true cost of a single user message
+- **Token breakdown** — The usage object has four fields:
+  - `input_tokens` — regular input tokens billed this turn
+  - `cache_creation_input_tokens` — tokens written to prompt cache (1.25× rate)
+  - `cache_read_input_tokens` — tokens read from prompt cache (0.1× rate)
+  - `output_tokens` — tokens Claude generated
+- **Orphaned tool results** — When the history window is trimmed, the first message in
+  the window may be a `tool_result` with no matching `tool_use` — this causes an API
+  error. The `_safe_window()` function drops leading orphaned tool results before
+  sending history to Claude
+- **Empty assistant turns** — If an error occurs mid-stream and Claude produces no text,
+  saving an empty assistant turn corrupts history. Guard with `if response_text:` before
+  appending to history
+
+### Code Added
+```python
+# api.py — accumulate usage across all tool_runner turns
+total_input = total_cache_write = total_cache_read = total_output = 0
+async for msg in runner:
+    if hasattr(msg, "usage") and msg.usage:
+        u = msg.usage
+        total_input       += u.input_tokens
+        total_cache_write += getattr(u, "cache_creation_input_tokens", 0)
+        total_cache_read  += getattr(u, "cache_read_input_tokens", 0)
+        total_output      += u.output_tokens
+
+# Sent in the `done` SSE event so the browser can display it
+done_data["usage"] = {
+    "input": total_input,
+    "cache_write": total_cache_write,
+    "cache_read": total_cache_read,
+    "output": total_output,
+}
+
+# Guard: never save an empty assistant turn
+if response_text:
+    history.append({"role": "assistant", "content": response_text})
+    session_save(session_id, history)
+```
+
+```python
+# _safe_window: drop orphaned tool_result turns at the start of the history slice
+def _safe_window(hist, limit):
+    window = hist[-limit:]
+    while window and window[0].get("role") == "user":
+        content = window[0].get("content", "")
+        if isinstance(content, list) and content and \
+                isinstance(content[0], dict) and content[0].get("type") == "tool_result":
+            window = window[1:]
+        else:
+            break
+    return window
+```
+
+### SSE Event Updated
+```json
+// done event now includes model and token breakdown
+{ "type": "done", "session_id": "...", "model": "claude-haiku-4-5",
+  "usage": { "input": 312, "cache_write": 0, "cache_read": 890, "output": 47 } }
 ```
 
 ---
@@ -359,7 +523,7 @@ api.py (FastAPI)
 
 | Layer | Technology | Purpose |
 |---|---|---|
-| AI Model | Claude Sonnet 4.6 | Language model |
+| AI Model | Claude Sonnet 4.6 / Haiku 4.5 | Language model (routed by query complexity) |
 | AI SDK | Anthropic Python SDK | API client + tool runner |
 | Tool Protocol | MCP (Model Context Protocol) | Standard for AI tools |
 | Web Framework | FastAPI | REST API + SSE streaming |

@@ -122,18 +122,21 @@ Here is the step-by-step flow when a user asks a question in the browser:
 
 1. User types a question and presses Send
 2. Browser sends `POST /stream` to api.py with the message and session ID
-3. api.py loads the conversation history for that session from SQLite (last 10 messages sent to Claude)
-4. api.py sends the trimmed history plus all 8 tool schemas to Claude
-5. Claude reads the cached system prompt: *"call search_docs for topic-specific questions; skip for clearly general ones"*
-6. Claude decides whether to call `search_docs` based on the question type
-7. api.py forwards the tool call to mcp_server.py via stdin/stdout
-8. mcp_server.py calls rag.py, which searches ChromaDB
-9. ChromaDB returns the 4 most relevant document chunks
-10. The result is sent back to Claude
-11. Claude writes a final answer based on the retrieved chunks
-12. api.py streams the response back to the browser in real time
-13. The browser renders each text chunk as it arrives
-14. api.py saves the updated conversation to SQLite
+3. api.py loads the conversation history for that session from SQLite
+4. `_pick_model()` routes the message: Haiku for short/simple queries, Sonnet for long or doc-related ones
+5. `_safe_window()` trims history to the last 10 messages, dropping any orphaned `tool_result` turns
+6. api.py sends the window plus all 8 tool schemas to Claude, with the system prompt marked `cache_control: ephemeral`
+7. Claude reads the cached system prompt: *"call search_docs for topic-specific questions; skip for clearly general ones"*
+8. Claude decides whether to call `search_docs` based on the question type
+9. api.py forwards the tool call to mcp_server.py via stdin/stdout
+10. mcp_server.py calls rag.py, which searches ChromaDB
+11. ChromaDB returns the 4 most relevant document chunks
+12. The result is sent back to Claude
+13. Claude writes a final answer based on the retrieved chunks
+14. api.py streams the response back to the browser in real time as SSE chunks
+15. The browser renders each text chunk as it arrives
+16. When Claude finishes, api.py sends a `done` event containing the model used and a token usage breakdown
+17. api.py saves the updated conversation to SQLite (only if Claude produced a non-empty response)
 
 ---
 
@@ -214,6 +217,49 @@ scanned PDF in docs/
 
 Text-based PDFs (PDFs with an actual text layer) are read directly
 by `read_doc` using pypdf — no conversion needed.
+
+---
+
+## Model Routing
+
+Not every question needs the same model. `_pick_model()` in api.py routes each message:
+
+```
+Message arrives
+  ├── len > 120 chars?          → claude-sonnet-4-6
+  ├── contains doc keyword?     → claude-sonnet-4-6
+  │   (doc, file, search, note, summarize, analyze, report, …)
+  └── else                      → claude-haiku-4-5
+```
+
+Haiku is 10–20× cheaper than Sonnet for short conversational questions. Sonnet is
+used when the query is complex or involves document reasoning. The chosen model is
+included in the `done` SSE event so the UI can display which model answered.
+
+---
+
+## Token Management
+
+Three techniques keep costs low as conversations grow:
+
+**Prompt caching** — The system prompt is marked `cache_control: {"type": "ephemeral"}`.
+Anthropic caches this prefix for 5 minutes. After the first call, subsequent turns
+pay ~0.1× the normal rate for those tokens instead of the full rate.
+
+**History window** — The full conversation is stored in SQLite but only the last
+10 messages are sent to Claude (`HISTORY_LIMIT`). This caps context size so
+costs don't grow with conversation length.
+
+**Usage tracking** — Token counts are accumulated across all tool-runner turns
+(one turn per tool round-trip) and sent to the browser in the `done` event:
+
+```json
+{ "type": "done", "model": "claude-haiku-4-5",
+  "usage": { "input": 312, "cache_write": 0, "cache_read": 890, "output": 47 } }
+```
+
+`cache_read` tokens cost ~90% less than `input` tokens — a high `cache_read`
+relative to `input` means prompt caching is working correctly.
 
 ---
 

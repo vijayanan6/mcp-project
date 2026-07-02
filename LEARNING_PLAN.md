@@ -104,6 +104,46 @@ Last updated: June 2026
 
 ---
 
+## Phase 1.5 — Claude Code Plugin Marketplace (Optional Interlude, ~1 Week)
+**Goal: Learn Claude Code's real plugin/marketplace system — directly transferable to contributing
+to your company's internal marketplace**
+
+This uses Claude Code's actual marketplace mechanism (not a custom npm registry — GitHub hosting
+is the standard approach, so this maps 1:1 to a real internal marketplace repo).
+
+### Build one plugin
+- [ ] Create a plugin directory with `.claude-plugin/plugin.json` (`name`, `description`,
+      optionally `version`, `author`, `homepage`)
+- [ ] Add a skill: `skills/<skill-name>/SKILL.md` with YAML frontmatter (`description` is
+      required — it's what tells Claude when to invoke the skill)
+- [ ] Test `disable-model-invocation: true` on one skill so it only runs via explicit
+      `/plugin-name:skill-name` invocation, and leave another auto-invoked — compare the difference
+- [ ] Use `$ARGUMENTS` in a skill to accept user input after invocation
+- [ ] Test the plugin locally before publishing anywhere
+
+### Build the marketplace
+- [ ] Create a GitHub repo with `.claude-plugin/marketplace.json` at the root
+      (required fields: `name`, `description`, `plugins` array)
+- [ ] Reference your plugin in the `plugins` array via a `source` (subdirectory in the same
+      repo, or a separate repo entirely)
+- [ ] Add the marketplace: `/plugin marketplace add <owner>/<repo>`
+- [ ] Install your plugin from it: `/plugin install <plugin-name>@<marketplace-name>`
+- [ ] Verify the skill namespace shows up correctly (`<plugin-name>:<skill-name>`)
+- [ ] Try `/plugin marketplace update`, `/plugin disable`, `/plugin uninstall` to understand
+      the full lifecycle
+- [ ] Add a second plugin to the same marketplace to see how multi-plugin catalogs work
+- [ ] Set an explicit `version` (semver) in `plugin.json` and observe how that differs from
+      relying on the git commit SHA
+
+**Success check:** A teammate (or a second machine) can run
+`/plugin marketplace add <owner>/<repo>` and `/plugin install <plugin-name>@<repo>` and get
+your skill working with zero manual file copying
+
+**Reference:** code.claude.com/docs/en/plugin-marketplaces.md (distribution) and
+code.claude.com/docs/en/plugins-reference.md (schema)
+
+---
+
 ## Phase 2 — React Frontend (Weeks 7–12)
 **Goal: Replace chat.html with a proper React application**
 
@@ -203,6 +243,8 @@ Last updated: June 2026
 | pytest | docs.pytest.org |
 | pytest-asyncio | pytest-asyncio.readthedocs.io |
 | MCP Resources & Prompts | modelcontextprotocol.io/docs/concepts/resources |
+| Claude Code Plugin Marketplaces | code.claude.com/docs/en/plugin-marketplaces.md |
+| Claude Code Plugins Reference | code.claude.com/docs/en/plugins-reference.md |
 | Docker | docs.docker.com/get-started |
 | GCP Cloud Run | cloud.google.com/run/docs |
 | GCP CLI | cloud.google.com/sdk/docs/install |
@@ -221,6 +263,7 @@ Last updated: June 2026
 ```
 Weeks 1–2: pytest + MCP resources/prompts → solid foundation
 Month 1:   Docker + Cloud Run → app live on GCP
+Interlude: Claude Code Plugin Marketplace (optional) → plugin.json, marketplace.json, GitHub-hosted registry
 Month 2:   GCP Services → PostgreSQL, GCS, Secret Manager
 Month 3:   React frontend → proper chat UI
 Month 4:   Authentication → multi-user, secure
