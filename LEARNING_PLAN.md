@@ -48,6 +48,18 @@ Last updated: June 2026
 
 ---
 
+### Prompt Evaluation (Evals)
+- [ ] Understand what evals are and why they differ from unit tests
+- [ ] Build an eval dataset (JSON) covering system prompt instructions — tool selection, model routing, edge cases
+- [ ] Write an eval runner that scores tool selection (did Claude call the right tool?)
+- [ ] Implement LLM-as-judge to score open-ended response quality
+- [ ] Run evals after every system prompt change to catch regressions
+- [ ] Explore Promptfoo (open source) as an eval framework
+
+**Success check:** Eval suite runs automatically, scores tool selection accuracy and model routing correctness across 20+ test cases
+
+---
+
 ### MCP Resources & Prompts
 - [ ] Understand the 3 MCP primitives: tools (actions), resources (data), prompts (templates)
 - [ ] Add a resource to `mcp_server.py` that exposes the `docs/` folder listing
