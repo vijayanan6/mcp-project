@@ -151,7 +151,40 @@ Multi-turn sessions stored in SQLite. Full history saved to DB; only the last 10
 
 ---
 
-### 10. Prompt Evaluation Pipeline
+### 10. AI Cost Dashboard & Credit Tracking
+
+Built a full observability layer for LLM API spend — the same class of tooling used in enterprise AI platforms to control costs.
+
+**What it tracks:**
+- Token usage per turn: `input`, `cache_write`, `cache_read`, `output` — broken out per model
+- Estimated USD cost per message, accumulated in SQLite (`usage_logs` table)
+- Per-session cost breakdown — top 10 sessions ranked by spend
+- Daily usage bar chart (14-day rolling window, hover tooltips)
+
+**Credit tracker (with alerting):**
+```
+Starting balance: $5.00 | Alert threshold: $1.00
+───────────────────────────────────────
+Remaining: $4.72   Burn rate: $0.14/day   Days left: 33
+Progress:  ████████░░░░░░░░░░░░  5.6% used
+```
+
+- `POST /usage/credit` — saves balance + alert threshold to `credit_config` SQLite table (singleton row, upserted)
+- Progress bar changes colour: green → yellow (< 2× threshold) → red (below threshold)
+- **Low-credit alert badge** in the chat UI header pulses red when remaining balance falls below the threshold — checked every 60 seconds live
+
+**Endpoints:**
+| Route | Purpose |
+|-------|---------|
+| `GET /usage` | Visual HTML dashboard |
+| `GET /usage/data` | JSON: totals, by_model, by_day, by_session, credit config |
+| `POST /usage/credit` | Save starting balance and alert threshold |
+
+**Key engineering decision:** cost is estimated client-side from token counts using a pricing table in `database.py` — not an extra API call. Verified against `console.anthropic.com`.
+
+---
+
+### 11. Prompt Evaluation Pipeline
 
 Built an eval pipeline to verify Claude follows system prompt rules — not manually, but automatically with a scored pass/fail report.
 
@@ -189,6 +222,8 @@ Evals caught two real bugs that manual testing missed:
 | SSE over WebSockets | Simpler for one-directional streaming; sufficient for chat |
 | `temperature=0.3` | Tool-using assistants need consistency, not creativity |
 | `.env` over OS env vars | Portable, project-scoped, git-ignored |
+| Client-side cost estimation | Token count × pricing table — no extra API call needed |
+| Credit alert in chat header | Surface spend pressure where the user is working, not a separate admin screen |
 
 ---
 
