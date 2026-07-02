@@ -177,10 +177,31 @@ Progress:  ████████░░░░░░░░░░░░  5.6% us
 | Route | Purpose |
 |-------|---------|
 | `GET /usage` | Visual HTML dashboard |
-| `GET /usage/data` | JSON: totals, by_model, by_day, by_session, credit config |
+| `GET /usage/data` | JSON: totals, by_model, by_day, by_session, by_tool, credit config |
 | `POST /usage/credit` | Save starting balance and alert threshold |
 
-**Key engineering decision:** cost is estimated client-side from token counts using a pricing table in `database.py` — not an extra API call. Verified against `console.anthropic.com`.
+**Cost by Tool breakdown:**
+
+Every MCP tool call is now tracked — stored as a JSON array in `tools_used` column of `usage_logs`, aggregated via SQLite's `json_each()`:
+
+```sql
+SELECT json_each.value AS tool_name, COUNT(*) AS calls,
+       SUM(estimated_cost_usd) AS cost_usd, AVG(estimated_cost_usd) AS avg_cost_usd
+FROM usage_logs, json_each(usage_logs.tools_used)
+GROUP BY json_each.value ORDER BY calls DESC
+```
+
+The dashboard shows which tools are called most and what they cost — `search_docs` dominates because it routes to Sonnet with document context; `get_weather` is nearly free.
+
+**Token economics understood:**
+```
+Claude reads  → INPUT  tokens  → you pay input price
+Claude writes → OUTPUT tokens  → most expensive per token (3–5×)
+Cache hit     → READ   tokens  → 10× cheaper than input
+System prompt cached after message 1 → near-free on every subsequent turn
+```
+
+**Key engineering decision:** cost is estimated from token counts × pricing table — no extra API call. Schema migration handled safely with `ALTER TABLE ... ADD COLUMN` + try/except.
 
 ---
 

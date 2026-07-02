@@ -614,6 +614,120 @@ python evals/run_evals.py
 
 ---
 
+## Phase 13 — AI Cost Dashboard & Token Economics
+
+### What We Built
+A full observability layer for LLM API spend — token tracking, cost estimation, credit management, tool cost breakdown, and a live alert badge in the chat UI.
+
+### Key Concepts Learned
+
+**Token economics — how Claude billing actually works**
+- Every API call returns 4 token counts, each priced differently:
+  - `input_tokens` — fresh tokens sent this turn (history + message) → full input price
+  - `cache_write_tokens` — system prompt saved to Anthropic's cache → slightly above input price (one-time)
+  - `cache_read_tokens` — system prompt served from cache → ~10× cheaper than input
+  - `output_tokens` — what Claude wrote back → most expensive per token (3–5× input price)
+- Input tokens will always exceed output tokens in a chat assistant — you send history + message, Claude sends just the answer
+- Output costs more per token even though there are fewer of them — long Claude responses are expensive
+- Cache read is nearly free — 37× cheaper than input on Sonnet. Longer sessions = more savings
+
+**Why output is the most expensive token type**
+```
+Sonnet pricing per 1K tokens:
+  Output:     $0.015  ← most expensive
+  Input:      $0.003
+  Cache Write: $0.00375
+  Cache Read: $0.0003 ← nearly free
+```
+
+**Prompt caching in practice**
+```
+Message 1:  system prompt WRITE (one-time cost) + fresh input
+Message 2+: system prompt READ  (near-free)     + fresh input
+```
+Cache hit rate = `cache_read / (input + cache_read)`. Above 60% means caching is working well.
+
+**Client-side cost estimation**
+- Cost estimated from token counts × pricing table in `database.py` — no extra API call
+- `_estimate_cost(model, input, cache_write, cache_read, output)` runs after every response
+- Result stored in `usage_logs.estimated_cost_usd` — accumulated across all sessions
+
+**SQLite schema migration**
+- `ALTER TABLE ... ADD COLUMN` with try/except — safe way to add columns to existing databases without data loss
+- Used for `tools_used TEXT DEFAULT '[]'` column added to `usage_logs`
+
+**SQLite `json_each()` for array aggregation**
+- Tools stored as JSON array per row: `["search_docs", "manage_notes"]`
+- `json_each()` unpacks arrays into rows so you can GROUP BY individual tool names
+- No Python-side parsing needed — the database handles it
+```sql
+SELECT json_each.value AS tool_name, COUNT(*) AS calls
+FROM usage_logs, json_each(usage_logs.tools_used)
+GROUP BY json_each.value
+```
+
+**SVG charts in pure HTML**
+- Replaced div-based bars with an SVG chart rendered entirely in JavaScript
+- Advantages: precise text positioning, Y-axis labels, grid lines, hover tooltips, dot+line overlay
+- `getBoundingClientRect().width` for responsive width; `viewBox` for scaling
+- No chart library needed — just SVG primitives (`rect`, `text`, `line`, `polyline`, `circle`)
+
+### What Was Built
+
+**SQLite tables added:**
+- `usage_logs` — token counts, model, cost, tools_used (JSON array) per request
+- `credit_config` — singleton row (id=1) storing starting balance and alert threshold
+
+**API endpoints added:**
+| Endpoint | Purpose |
+|---|---|
+| `GET /usage` | Visual HTML dashboard |
+| `GET /usage/data` | JSON: totals, by_model, by_day, by_session, by_tool, credit |
+| `POST /usage/credit` | Save starting balance and alert threshold |
+
+**Dashboard features:**
+- 6 summary cards — requests, cost, cache savings, cache hit rate, input tokens, output tokens
+- Token breakdown bar chart — Input / Cache Write / Cache Read / Output with colour coding
+- Haiku vs Sonnet donut chart with cost split
+- Daily SVG bar chart — Y-axis scale, dollar labels, grid lines, dots, trend line, intensity shading
+- Per-session cost table — top 10 sessions ranked by spend
+- **Cost by Tool** table — calls, total cost, avg cost/call, frequency bar per MCP tool
+- **Claude API Credit Tracker** — starting balance, progress bar, burn rate ($/day), days remaining
+- Low-credit alert badge in chat header — pulses red when remaining < threshold
+
+### Key Code Patterns
+```python
+# database.py — cost estimation
+_PRICING = {
+    "claude-haiku-4-5":  { "input": 0.0008, "cache_read": 0.00008, "output": 0.004 },
+    "claude-sonnet-4-6": { "input": 0.003,  "cache_read": 0.0003,  "output": 0.015 },
+}
+
+# database.py — tool aggregation via json_each
+SELECT json_each.value AS tool_name, COUNT(*) AS calls, SUM(estimated_cost_usd) AS cost_usd
+FROM usage_logs, json_each(usage_logs.tools_used)
+GROUP BY json_each.value ORDER BY calls DESC
+
+# api.py — capture tools called during stream
+tools_called: list[str] = []
+for block in msg.content:
+    if block.type == "tool_use":
+        tools_called.append(block.name)
+
+usage_log(session_id, model, ..., tools=tools_called)
+```
+
+### Before vs After
+| | Before | After |
+|---|---|---|
+| Token visibility | None | 4-way breakdown per message in chat UI |
+| Cost tracking | None | Estimated to 4 decimal places per request |
+| Tool insight | None | Calls + cost + avg cost per MCP tool |
+| Credit management | None | Balance tracker, burn rate, days remaining, alert |
+| Daily chart | None | SVG chart with Y-axis, labels, trend line |
+
+---
+
 ## Final Architecture
 
 ```

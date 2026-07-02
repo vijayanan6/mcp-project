@@ -13,12 +13,17 @@ Last updated: June 2026
 - [x] Python (intermediate)
 - [x] MCP (Model Context Protocol) — server, tools, stdio transport
 - [x] FastAPI — web server, SSE streaming, lifespan, Pydantic
-- [x] SQLite — persistence, CRUD, sessions
+- [x] SQLite — persistence, CRUD, sessions, schema migration
 - [x] ChromaDB — vector database, embeddings
 - [x] RAG — chunking, semantic search, sentence-transformers
 - [x] PDF processing — pypdf (text), Tesseract OCR (scanned)
 - [x] Git + GitHub — branches, commits, pull requests
 - [x] GCP concepts — Cloud Run, Cloud SQL, Secret Manager, IAM, VPC (theory)
+- [x] Token economics — input / cache_write / cache_read / output pricing, why caching matters
+- [x] LLM cost observability — usage_logs table, cost estimation, per-session and per-tool breakdown
+- [x] Prompt caching — cache_control ephemeral, cache hit rate, burn rate calculation
+- [x] Model routing — Haiku vs Sonnet cost tradeoff, signal-based routing heuristics
+- [x] Prompt evaluation — evals/dataset.json, run_evals.py, 12/12 passing
 
 ### Not Yet Started ❌
 - [ ] MCP Inspector — visual debugger for MCP servers (test tools without a full client)
@@ -118,11 +123,15 @@ Last updated: June 2026
 
 ---
 
-### Observability & Logging (Basic — Before Production)
+### Observability & Logging (Partially complete ✅)
+- [x] Track token usage per request — input, cache_write, cache_read, output
+- [x] Track cost per request — estimated USD using pricing table
+- [x] Track tool calls per request — stored as JSON array in usage_logs
+- [x] Build visual cost dashboard — daily chart, model split, per-session, per-tool
+- [x] Credit tracker — starting balance, burn rate, days remaining, alert badge
 - [ ] Add structured logging to `api.py` using Python's `logging` module (not `print`)
-- [ ] Log every request: session_id, model used, token count, latency, tool calls
 - [ ] Log every error with full traceback to a log file
-- [ ] Understand the difference between DEBUG, INFO, WARNING, ERROR, CRITICAL log levels
+- [ ] Understand DEBUG / INFO / WARNING / ERROR / CRITICAL log levels
 - [ ] Add request latency tracking — how long does each `/stream` call take?
 - [ ] Explore Langfuse free tier — trace every Claude API call end to end
 
