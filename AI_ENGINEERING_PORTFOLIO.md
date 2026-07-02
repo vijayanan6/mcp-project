@@ -166,6 +166,33 @@ Multi-turn sessions stored in SQLite. Full history saved to DB; only the last 10
 
 ---
 
+## AI-Powered Engineering — Claude Code
+
+This entire project was built using **Claude Code** as an AI-powered development environment — not just as a chatbot, but as an integrated engineering tool.
+
+### How I use Claude Code professionally
+
+| Capability | How I use it |
+|------------|-------------|
+| **AI pair programming** | Build features, debug issues, and refactor code through natural language in the terminal |
+| **`/code-review`** | Run structured code reviews at configurable depth before every commit |
+| **`/verify`** | Confirm a change works in the running app, not just in tests |
+| **`/simplify`** | Audit changed code for reuse, efficiency, and unnecessary complexity |
+| **`/security-review`** | Review pending changes for OWASP-level vulnerabilities |
+| **MCP servers** | Extend Claude Code with GitHub, Playwright, and custom tools |
+| **Hooks** | Automate lifecycle actions (PreToolUse, PostToolUse, SessionStart) |
+| **Skills** | Custom slash commands for project-specific workflows |
+| **Memory system** | Persistent context across sessions — project state, preferences, learning path |
+| **Subagents** | Spawn parallel agents for independent research or code tasks |
+
+### Why this matters for engineering teams
+
+Claude Code changes how engineering work gets done — not by replacing engineers, but by eliminating the friction between intent and implementation. An engineer who knows how to use AI tooling effectively ships faster, catches more bugs, and spends more time on architecture decisions than boilerplate.
+
+Using Claude Code throughout this project means every decision — from database choice to token optimization to security — was made with AI-assisted reasoning, then verified against the running code.
+
+---
+
 ## What's Next
 
 | Phase | Concept |
