@@ -115,7 +115,7 @@
   <!-- Credit Tracker Banner -->
   <div class="credit-banner" id="credit-banner">
     <div style="flex:1;min-width:280px">
-      <div style="font-size:0.85rem;font-weight:600;color:#f8fafc;margin-bottom:12px">Anthropic Credit Tracker</div>
+      <div style="font-size:0.85rem;font-weight:600;color:#f8fafc;margin-bottom:12px">Claude API Credit Tracker</div>
       <div class="credit-progress-wrap" id="credit-progress-wrap" style="display:none">
         <div class="credit-progress-label">
           <span id="cp-spent">$0.0000 spent</span>
@@ -373,9 +373,15 @@
       const maxCost = Math.max(...byDay.map(d=>d.cost_usd), 0.0001);
       const reversed = [...byDay].reverse();
       document.getElementById('daily-chart').innerHTML = reversed.map(d => {
-        const h = Math.max(Math.round((d.cost_usd/maxCost)*76), 2);
+        const h    = Math.max(Math.round((d.cost_usd/maxCost)*76), 2);
+        const frac = d.cost_usd / maxCost;
+        // dim slate → bright sky-blue based on spend intensity
+        const r = Math.round(30  + frac * (56  - 30));
+        const g = Math.round(58  + frac * (189 - 58));
+        const b = Math.round(138 + frac * (248 - 138));
+        const color = `rgb(${r},${g},${b})`;
         return `<div class="day-bar-wrap">
-          <div class="day-bar" style="height:${h}px" data-tip="${d.day}: ${fmtCost(d.cost_usd)} · ${d.requests} req"></div>
+          <div class="day-bar" style="height:${h}px;background:${color}" data-tip="${d.day}: ${fmtCost(d.cost_usd)} · ${d.requests} req"></div>
         </div>`;
       }).join('');
       document.getElementById('daily-labels').innerHTML = reversed.map(d =>
