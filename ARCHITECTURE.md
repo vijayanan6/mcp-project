@@ -102,6 +102,7 @@ Visual observability dashboard at `/usage`.
 - Cost by Tool table — calls, total cost, avg cost per MCP tool
 - Cost by Project table — multi-project breakdown with filter dropdown
 - Claude API Credit Tracker — starting balance, progress bar, burn rate, days remaining
+- Cost Forecast — 30/60/90 day projected spend based on current burn rate
 
 ### convert_pdfs.py — PDF Converter
 Standalone script for converting scanned PDFs to readable text.

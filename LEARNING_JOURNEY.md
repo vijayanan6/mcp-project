@@ -693,6 +693,7 @@ GROUP BY json_each.value
 - Per-session cost table — top 10 sessions ranked by spend
 - **Cost by Tool** table — calls, total cost, avg cost/call, frequency bar per MCP tool
 - **Claude API Credit Tracker** — starting balance, progress bar, burn rate ($/day), days remaining
+- **Cost Forecast** — 30/60/90 day projected spend based on burn rate; pure frontend math (`burnPerDay × days`), no backend or schema changes
 - Low-credit alert badge in chat header — pulses red when remaining < threshold
 
 ### Key Code Patterns

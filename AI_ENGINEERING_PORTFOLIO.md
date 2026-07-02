@@ -160,6 +160,7 @@ Built a full observability layer for LLM API spend — the same class of tooling
 - Estimated USD cost per message, accumulated in SQLite (`usage_logs` table)
 - Per-session cost breakdown — top 10 sessions ranked by spend
 - Daily usage bar chart (14-day rolling window, hover tooltips)
+- Cost forecast — 30/60/90 day projected spend based on burn rate (pure frontend math, no backend changes)
 
 **Credit tracker (with alerting):**
 ```

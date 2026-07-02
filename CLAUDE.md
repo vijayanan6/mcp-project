@@ -70,7 +70,7 @@ Browser ──HTTP/SSE──► api.py ──stdio/JSON-RPC──► mcp_server.
 `GET  /usage/data?project=name` — same but filtered to one project
 `POST /usage/credit`  — save starting balance and alert threshold `{ starting_balance: 5.00, alert_threshold: 1.00 }`
 
-Features: credit balance tracker, burn rate ($/day), days remaining, per-session cost table, cost by tool, cost by project, low-credit alert badge in chat header (pulses red when remaining < threshold).
+Features: credit balance tracker, burn rate ($/day), days remaining, 30/60/90-day cost forecast, per-session cost table, cost by tool, cost by project, low-credit alert badge in chat header (pulses red when remaining < threshold).
 
 ## Multi-Project Support — How to Wire Up a New Project
 
