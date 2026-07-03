@@ -166,6 +166,29 @@ Currently passing: **12/12 (100%)**. Run after every system prompt or routing ch
 
 ---
 
+## UI Testing with Playwright MCP
+
+A Playwright MCP server (Microsoft's official `@playwright/mcp`) is configured at project scope
+in `.mcp.json`, letting Claude Code drive `chat.html` and `usage.html` in a real browser —
+navigate, click, type, screenshot — instead of only reading source code to guess whether a UI
+change works.
+
+```powershell
+claude mcp add playwright --scope project -- npx -y @playwright/mcp
+```
+
+Restart Claude Code (or reconnect MCP servers) after adding it, then verify with `/mcp`.
+
+No secrets are needed for this server — safe to commit `.mcp.json` and share across a team.
+Screenshots and page snapshots it produces land in `.playwright-mcp/`, which is gitignored
+since they can capture session IDs and cost data from local testing.
+
+This is more than a nice-to-have: a live end-to-end test of the chat UI is what caught the
+`.env` UTF-8 BOM bug documented above — a bug that pure code review would have missed entirely,
+since the API key was correct and the failure only appeared once a real request was made.
+
+---
+
 ## How to Add a New Tool
 
 **Step 1 — Declare the tool** in `list_tools()` inside `mcp_server.py`:
