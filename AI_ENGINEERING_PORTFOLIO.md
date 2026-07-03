@@ -32,6 +32,7 @@ Browser ──HTTP/SSE──► FastAPI (api.py) ──stdio/JSON-RPC──► M
 | PDF Processing | pypdf, pymupdf, Tesseract OCR |
 | Language | Python 3.12 |
 | Version Control | Git + GitHub |
+| UI Testing | Playwright MCP (browser automation via Claude Code) |
 
 ---
 

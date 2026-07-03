@@ -843,6 +843,7 @@ api.py (FastAPI)
 | PDF Text | pypdf | Text-based PDF extraction |
 | PDF OCR | pymupdf + Tesseract | Scanned PDF extraction |
 | Version Control | Git + GitHub | Code history + backup |
+| UI Testing | Playwright MCP | Drives chat.html/usage.html in a real browser via Claude Code |
 | Language | Python 3.12 | Everything |
 
 ---

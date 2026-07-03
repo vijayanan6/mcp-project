@@ -312,6 +312,7 @@ relative to `input` means prompt caching is working correctly.
 | PDF (text) | pypdf | Lightweight PDF text extraction |
 | PDF (scanned) | pymupdf + Tesseract | Render pages → OCR → text |
 | Version Control | Git + GitHub | Code history and backup |
+| UI Testing | Playwright MCP | Drives chat.html/usage.html in a real browser via Claude Code |
 | Language | Python 3.12 | Everything |
 
 ---
