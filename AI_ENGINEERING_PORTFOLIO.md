@@ -148,6 +148,9 @@ Multi-turn sessions stored in SQLite. Full history saved to DB; only the last 10
 - `.env` + `python-dotenv` for API key management (industry standard)
 - `temperature=0.3` — tuned for a tool-using assistant (consistent, not creative)
 - SSL workaround for Windows corporate certificate chains
+- Diagnosed a silent auth failure caused by a UTF-8 byte-order-mark in `.env` — root-caused via structural checks (`grep -c "^ANTHROPIC_API_KEY="`) rather than ever printing the key itself
+- Evaluated a third-party MCP server (Playwright, Microsoft's official package) before installing — checked publisher trust, exact access boundary (browser automation only, no filesystem/shell reach), and where prompt-injection risk actually lives (untrusted external content, not applicable when testing `localhost`)
+- Standing discipline: after every new file, dependency, or MCP server, check `git status` for untracked artifacts and confirm `.gitignore` covers them before considering a change complete — caught a real gap where Playwright's screenshot/snapshot output wasn't ignored and could have leaked session data into the public repo
 
 ---
 
