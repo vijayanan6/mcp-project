@@ -276,7 +276,7 @@ This entire project was built using **Claude Code** as an AI-powered development
 | **`/verify`** | Confirm a change works in the running app, not just in tests |
 | **`/simplify`** | Audit changed code for reuse, efficiency, and unnecessary complexity |
 | **`/security-review`** | Review pending changes for OWASP-level vulnerabilities |
-| **MCP servers** | Extend Claude Code with GitHub, Playwright, and custom tools |
+| **MCP servers** | Evaluated and wired up Playwright MCP (Microsoft's official browser-automation server) at project scope — assessed publisher trust, access boundary, and prompt-injection risk before installing, then used it to drive the chat UI and cost dashboard end-to-end, which caught a real `.env` encoding bug (UTF-8 BOM silently breaking API auth) that code review alone had missed |
 | **Hooks** | Automate lifecycle actions (PreToolUse, PostToolUse, SessionStart) |
 | **Skills** | Custom slash commands for project-specific workflows |
 | **Memory system** | Persistent context across sessions — project state, preferences, learning path |

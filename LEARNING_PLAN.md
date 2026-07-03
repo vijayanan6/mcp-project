@@ -24,6 +24,8 @@ Last updated: June 2026
 - [x] Prompt caching — cache_control ephemeral, cache hit rate, burn rate calculation
 - [x] Model routing — Haiku vs Sonnet cost tradeoff, signal-based routing heuristics
 - [x] Prompt evaluation — evals/dataset.json, run_evals.py, 12/12 passing
+- [x] Evaluating third-party MCP servers before install — publisher trust, access boundary, prompt-injection risk surface, project vs user scope
+- [x] Playwright MCP — browser automation for UI testing, wired into Claude Code at project scope
 
 ### Not Yet Started ❌
 - [ ] MCP Inspector — visual debugger for MCP servers (test tools without a full client)
