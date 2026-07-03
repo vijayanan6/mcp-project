@@ -751,6 +751,50 @@ One database, multiple tenants isolated by a tag column. Same pattern used by Sa
 
 ---
 
+## Phase 14 — Playwright MCP & Security-First Tooling
+
+### What We Built
+Added Playwright MCP as a project-scoped MCP server so Claude Code can drive the running app in a real browser — navigate, click, type, screenshot — instead of only reading source code. Used it immediately to test the chat UI and cost dashboard end to end, which surfaced a real bug.
+
+### Key Concepts Learned
+
+**Evaluating a new MCP server before installing it**
+- Check the publisher first — `@playwright/mcp` is published by Microsoft under the official Playwright org, not a random third party
+- Understand the access boundary — it only grants browser automation, no filesystem or shell access to the host machine
+- Identify where the actual risk lives — prompt injection from *untrusted external content* (a malicious webpage's text instructing the agent). Testing against `localhost` (content you wrote yourself) sidesteps that risk entirely
+- Supply chain risk (`npx -y` pulling from npm at run time) is the same category as any npm install — mitigated by using a well-known, widely-adopted package
+
+**Project scope vs user scope for MCP servers**
+- `claude mcp add <name> --scope project -- <command>` writes to `.mcp.json` in the repo root — shared with anyone who clones the project
+- No secrets belong in `.mcp.json` — verified before committing
+- Personal-only servers belong in user/global scope instead
+
+**A real bug Playwright testing caught immediately**
+- First live test of the chat UI returned: `"Could not resolve authentication method"` — even though `.env` had a correct API key
+- Root cause: `.env` was saved as **UTF-8 with BOM** (byte-order-mark), a common default when Windows tools (Notepad, some PowerShell commands) save text files
+- The BOM character silently merges with the first line, turning `ANTHROPIC_API_KEY` into an unrecognized variable name — `python-dotenv` never sees it, and the SDK falls back to no credentials with a generic auth error
+- Diagnosed *without ever printing the actual key* — used `grep -c "^ANTHROPIC_API_KEY="` (a structural check, zero secret exposure) to prove the line didn't match, then confirmed the BOM was the cause
+- Fixed by rewriting the file as plain UTF-8 (no BOM) via `[System.IO.File]::WriteAllText($path, $content, (New-Object System.Text.UTF8Encoding $false))`
+- `uvicorn --reload` does **not** watch `.env` for changes — fixing the file requires a full process restart, not just a reload
+
+**Security discipline applied to new tooling, not just app code**
+- After adding Playwright MCP, checked `git status` and found a new untracked `.playwright-mcp/` directory containing screenshots and page snapshots — not yet covered by `.gitignore`
+- This is a real, general pattern: **every new tool integration can create new artifacts that need a `.gitignore` entry** — it's not enough to secure the app; the tooling around it needs the same discipline
+- Fixed by adding `.playwright-mcp/` and the specific test screenshot filename to `.gitignore` (deliberately *not* a blanket `*.png`, since that would silently block a legitimate future README screenshot)
+
+**Diagnosing secrets without exposing them**
+- Never `cat` or `Read` a file suspected of containing a secret to "see what's wrong" — use structural checks instead (`grep -c`, line-count, redacted `sed` substitution) that prove or disprove a hypothesis without the secret ever appearing in a transcript or log
+
+### Before vs After
+| | Before | After |
+|---|---|---|
+| UI verification | Read code, trust it | Drive it in a real browser via Playwright MCP |
+| `.env` encoding | Unverified — silent BOM bug live for some time | Verified plain UTF-8, documented as a standard in README |
+| New-tool security check | Not a formal step | Standing rule: after any new file/tool/dependency, check for untracked artifacts and gitignore gaps before considering the task done |
+| Secret diagnosis | N/A | Structural checks only (grep -c, redacted sed) — secret value never printed |
+
+---
+
 ## Final Architecture
 
 ```

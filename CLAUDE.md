@@ -119,6 +119,41 @@ Two SSL patches are applied on Windows machines with corporate certificate chain
 1. **`rag.py`** — patches `httpx.Client.__init__` and `httpx.AsyncClient.__init__` to default `verify=False` before the HuggingFace model download. The model (~80MB) is cached after first download.
 2. **`api.py` lifespan** — clears the `SSLKEYLOGFILE` environment variable (set by monitoring drivers like `nllMonFltProxy`) and passes `httpx.AsyncClient(verify=False)` explicitly to `AsyncAnthropic()` to prevent SSL context creation failures.
 
+## .env Encoding Note (Windows)
+
+`.env` must be saved as plain **UTF-8 (no BOM)**. Windows tools (Notepad, some PowerShell
+`Set-Content`/`Out-File` defaults) commonly save "UTF-8 with BOM" instead. The BOM character
+silently merges with the first line, turning `ANTHROPIC_API_KEY` into an unrecognized variable
+name — `python-dotenv` never loads it, and the SDK fails with a generic
+`"Could not resolve authentication method"` error even though the key itself is correct.
+
+Verify without exposing the key: `grep -c "^ANTHROPIC_API_KEY=" .env` should return `1`. If it
+returns `0`, strip the BOM:
+```powershell
+$content = Get-Content -Raw -Path .env
+[System.IO.File]::WriteAllText(".env", $content, (New-Object System.Text.UTF8Encoding $false))
+```
+Note `uvicorn --reload` does not watch `.env` for changes — a full process restart is required
+after fixing it.
+
+## Playwright MCP (UI Testing)
+
+A Playwright MCP server is configured at project scope in `.mcp.json` (Microsoft's official
+`@playwright/mcp` package, no secrets in config, safe to share). It lets Claude Code drive
+`chat.html` and `usage.html` in a real browser — navigate, click, type, screenshot — to verify
+UI changes actually work, per the testing standard in this file, instead of only reading source.
+
+Screenshots and page snapshots land in `.playwright-mcp/` — gitignored, since they can contain
+session IDs and cost data from local testing.
+
+## Security Standard — After Every Change
+
+After any file edit, new dependency, new MCP server, or config change: check `git status` for
+new untracked files, confirm nothing secret is in what's about to be committed, and confirm
+`.gitignore` covers any new artifact-producing tool (test output, logs, generated screenshots).
+Never print a secret value to diagnose it — use structural checks (`grep -c`, redacted `sed`)
+instead. This applies to every change in this repo, not just app code.
+
 ## Git Workflow
 
 See `GIT_COMMANDS.md` for the full reference. Standard workflow:

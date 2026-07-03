@@ -169,6 +169,22 @@ The pattern scales from SQLite to PostgreSQL to distributed databases without ch
 
 ---
 
+## 15. The Bug You Can't See Is the One That Bites Hardest
+
+An `.env` file with a correct API key still failed authentication — because the file had an invisible UTF-8 byte-order-mark at the very start, merging with the first variable name. No amount of staring at the key itself would have found it; the fix came from checking the file's *structure* (`grep -c "^ANTHROPIC_API_KEY="`), not its content.
+
+The broader lesson: when something that should obviously work doesn't, question the layer below the one you're debugging — the encoding, not the value; the transport, not the payload.
+
+---
+
+## 16. Security Is a Discipline Applied to Tooling, Not Just Application Code
+
+Adding Playwright MCP for UI testing created a new, ungitignored output directory (`.playwright-mcp/`) holding screenshots and page snapshots with session and cost data — exactly the kind of artifact that quietly ends up in a public repo if nobody checks for it.
+
+The fix wasn't complicated. The discipline was remembering to look: after *every* new tool, dependency, or config change — not just application features — check for new untracked files before considering the task done.
+
+---
+
 ## The Core Takeaway
 
 You started wanting to understand MCP.
