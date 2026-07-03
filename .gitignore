@@ -49,6 +49,10 @@ logs/
 *.tmp
 *.temp
 
+# Playwright MCP output — screenshots and page snapshots, may contain session data
+.playwright-mcp/
+dashboard-test.png
+
 # Claude Code internal files
 .claude/
 
