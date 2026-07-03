@@ -48,3 +48,39 @@ logs/
 # Temp files
 *.tmp
 *.temp
+
+# Claude Code internal files
+.claude/
+
+# Testing (pytest — Phase pre-Docker)
+.pytest_cache/
+.coverage
+htmlcov/
+coverage.xml
+
+# Type checking
+.mypy_cache/
+
+# GCP — service account keys (NEVER commit these)
+*service-account*.json
+*-key.json
+service_account.json
+gcp-key.json
+
+# Certificates & private keys
+*.pem
+*.p12
+*.pfx
+
+# Docker local overrides (Phase 1)
+docker-compose.override.yml
+.docker/
+
+# React / Node (Phase 2)
+node_modules/
+.next/
+.env.local
+.env.development.local
+.env.production.local
+frontend/dist/
+frontend/build/
