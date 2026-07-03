@@ -1,7 +1,8 @@
 # MCP Learning Project
 
 A hands-on project to learn **Model Context Protocol (MCP)** by building a custom MCP server,
-an AI agent, and a full-stack web application with semantic document search.
+an AI agent, and a full-stack web application with semantic document search, model routing,
+prompt evaluation, and a live AI cost observability dashboard.
 
 ---
 
@@ -19,15 +20,25 @@ to the MCP standard works with any MCP-compatible AI.
 MCP Project/
 ├── api.py                  — FastAPI web server (primary entry point)
 ├── agent.py                — CLI agent (original learning version)
-├── mcp_server.py           — MCP server with 8 tools
-├── database.py             — SQLite layer (notes + sessions)
-├── rag.py                  — ChromaDB semantic search
-├── convert_pdfs.py         — Tesseract OCR for scanned PDFs
-├── inspect_db.py           — Utility to view SQLite contents
+├── mcp_server.py            — MCP server with 8 tools
+├── database.py              — SQLite layer (notes, sessions, usage_logs, credit_config)
+├── rag.py                   — ChromaDB semantic search
+├── convert_pdfs.py          — Tesseract OCR for scanned PDFs
+├── inspect_db.py            — Utility to view SQLite contents
 ├── templates/
-│   └── chat.html           — Browser chat UI
-├── docs/                   — Drop your documents here
-├── LEARNING_JOURNEY.md     — Full phase-by-phase learning record
+│   ├── chat.html            — Browser chat UI (SSE streaming, credit alert badge)
+│   └── usage.html           — AI Cost Dashboard (tokens, cost, forecast, multi-project)
+├── docs/                    — Drop your documents here
+├── evals/
+│   ├── dataset.json         — 12 test cases for tool selection + model routing
+│   └── run_evals.py         — Eval runner (WARNING: consumes API credits)
+├── .mcp.json                — Project-scoped MCP servers (Playwright, for UI testing)
+├── LEARNING_JOURNEY.md      — Full phase-by-phase learning record
+├── LEARNING_PLAN.md         — Roadmap to expert AI engineer
+├── ARCHITECTURE.md          — System design in plain English
+├── INSIGHTS.md              — Key lessons and principles
+├── AI_ENGINEERING_PORTFOLIO.md — Skills portfolio (LinkedIn/GitHub facing)
+├── GIT_COMMANDS.md          — Git reference used throughout the project
 └── requirements.txt
 ```
 
@@ -42,14 +53,17 @@ Browser (http://localhost:8000)
   ▼
 api.py (FastAPI)
   │
-  ├──► Claude Sonnet 4.6 (Anthropic API)
+  ├──► Claude Sonnet 4.6 / Haiku 4.5 (Anthropic API — routed by query complexity)
   │         │ tool calls
   │         ▼
   └──► mcp_server.py (8 MCP Tools)
-            ├──► database.py  → SQLite (notes + sessions persist across restarts)
+            ├──► database.py  → SQLite (notes, sessions, usage_logs, credit_config)
             ├──► rag.py       → ChromaDB (semantic document search)
             └──► docs/        → your documents (txt, md, PDF)
 ```
+
+Three processes run together: the browser, `api.py`, and `mcp_server.py` (spawned as a subprocess
+and kept alive for the life of the app). See `ARCHITECTURE.md` for the full request lifecycle.
 
 ---
 
@@ -77,26 +91,78 @@ api.py (FastAPI)
 
 ### Install dependencies
 ```powershell
-pip install anthropic[mcp] mcp pymupdf pytesseract pypdf fastapi "uvicorn[standard]" chromadb sentence-transformers
+pip install -r requirements.txt
 ```
 
-### Set your API key (one-time, permanent)
-```powershell
-[System.Environment]::SetEnvironmentVariable("ANTHROPIC_API_KEY", "sk-ant-...", "User")
+### Set your API key
+Create a `.env` file in the project root:
 ```
+ANTHROPIC_API_KEY=sk-ant-...
+```
+
+> **Windows tip:** save `.env` as plain **UTF-8 (no BOM)**. Notepad and some PowerShell
+> commands default to "UTF-8 with BOM," which silently breaks `python-dotenv` and produces a
+> `"Could not resolve authentication method"` error even though the key is correct.
 
 ### Run the web app
 ```powershell
-$env:ANTHROPIC_API_KEY = [System.Environment]::GetEnvironmentVariable("ANTHROPIC_API_KEY", "User")
 python -m uvicorn api:app --reload --port 8000
 ```
 
-Open **`http://localhost:8000`** in your browser.
+Open **`http://localhost:8000`** for the chat UI, or **`http://localhost:8000/usage`** for the
+AI Cost Dashboard.
 
 ### Or run the CLI agent
 ```powershell
 python agent.py
 ```
+
+---
+
+## AI Cost Dashboard
+
+Full observability into what your Claude API usage actually costs — token-level, session-level,
+tool-level, and multi-project.
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /usage` | Visual HTML dashboard |
+| `GET /usage/data` | JSON: totals, by_model, by_day, by_session, by_tool, by_project, credit config |
+| `GET /usage/data?project=name` | Same, filtered to one project |
+| `POST /usage/credit` | Save starting balance + alert threshold |
+
+Features: 4-way token breakdown (input / cache write / cache read / output), cost by model
+(Haiku vs Sonnet), 14-day daily usage chart, **30/60/90-day cost forecast**, cost by MCP tool,
+cost by project, per-session cost ranking, credit balance tracker with burn rate and days
+remaining, and a low-credit alert badge that pulses in the chat header.
+
+This dashboard tracks **Anthropic API usage only** — not your Claude Pro subscription (a separate,
+flat-fee product). See `CLAUDE.md` for the full feature list and multi-project setup instructions.
+
+---
+
+## Model Routing & Prompt Caching
+
+Not every message needs the same model. `_pick_model()` routes short/simple queries to
+**Haiku** (10–20× cheaper) and long or document-related queries to **Sonnet**. The system
+prompt is marked `cache_control: ephemeral`, saving ~90% of its token cost after the first
+call in a 5-minute window. See `LEARNING_JOURNEY.md` Phase 8–9 for the full breakdown.
+
+---
+
+## Eval Pipeline
+
+12 test cases verify Claude follows system prompt rules — correct tool selection and correct
+model routing — scored automatically.
+
+```powershell
+# Start the app first, then in a second terminal:
+python evals/run_evals.py
+```
+
+> **Cost warning:** each eval case makes a real Claude API call. 12 cases = 12 API calls.
+
+Currently passing: **12/12 (100%)**. Run after every system prompt or routing change.
 
 ---
 
@@ -152,6 +218,8 @@ This handles documents of any size — only the relevant parts are sent to Claud
 | `@app.call_tool()` | `mcp_server.py` | Executes tools and returns results |
 | `lifespan` | `api.py` | Keeps MCP server alive across all HTTP requests |
 | `StreamingResponse` | `api.py` | SSE streaming to the browser |
+| `_pick_model()` | `api.py` | Routes each message to Haiku or Sonnet |
+| `usage_log()` | `database.py` | Records tokens, cost, tools called, project per request |
 | `init_db()` | `database.py` | Creates SQLite tables on startup |
 | `index_all()` | `rag.py` | Chunks + embeds all docs into ChromaDB |
 | `search()` | `rag.py` | Semantic similarity search |
@@ -172,6 +240,32 @@ This handles documents of any size — only the relevant parts are sent to Claud
 | `pytesseract` | Tesseract OCR wrapper |
 | `chromadb` | Vector database |
 | `sentence-transformers` | Local embedding model |
+| `python-dotenv` | Loads `.env` into environment variables |
+| `httpx` | HTTP client (Anthropic SDK + eval runner) |
+
+---
+
+## Windows SSL Note
+
+Two SSL patches are applied for Windows machines with corporate certificate chains or network
+monitoring drivers: `rag.py` defaults `httpx` client `verify=False` for the embedding model
+download, and `api.py`'s lifespan clears `SSLKEYLOGFILE` and passes an explicit `httpx.AsyncClient
+(verify=False)` to `AsyncAnthropic()`. See `CLAUDE.md` for details.
+
+---
+
+## Documentation
+
+| File | Purpose |
+|---|---|
+| `CLAUDE.md` | Instructions for Claude Code — commands, architecture, standards |
+| `ARCHITECTURE.md` | System design in plain English |
+| `LEARNING_JOURNEY.md` | Phase-by-phase build record |
+| `LEARNING_PLAN.md` | Roadmap to expert AI engineer |
+| `INSIGHTS.md` | Key lessons and principles |
+| `TUTORIAL.md` | Beginner teaching guide with exercises |
+| `GIT_COMMANDS.md` | All Git commands used, with explanations |
+| `AI_ENGINEERING_PORTFOLIO.md` | Skills portfolio for hiring managers |
 
 ---
 
@@ -181,11 +275,12 @@ This handles documents of any size — only the relevant parts are sent to Claud
 
 ---
 
-## Next Steps
+## What's Next
 
-- Replace mock weather with real OpenWeatherMap API
-- Add user authentication (JWT tokens)
-- Switch SQLite → PostgreSQL
-- Deploy to cloud (Railway / Render)
-- Add React frontend
-- Connect GitHub MCP server
+See `LEARNING_PLAN.md` for the full roadmap. Near-term:
+- pytest — unit + integration tests for MCP tools and API routes
+- Docker + GCP Cloud Run deployment
+- PostgreSQL (replacing SQLite) + pgvector (replacing ChromaDB)
+- React frontend with authentication (JWT)
+- Multi-model support — Gemini, OpenAI, and free local models via Ollama/Groq
+- Multi-agent systems and a second project in a different domain
