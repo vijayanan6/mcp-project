@@ -37,3 +37,14 @@ chroma_db/
 # OS
 .DS_Store
 Thumbs.db
+
+# LinkedIn drafts — personal, not project code
+LINKEDIN_POSTS.md
+
+# Logs
+*.log
+logs/
+
+# Temp files
+*.tmp
+*.temp
