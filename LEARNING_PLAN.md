@@ -524,6 +524,7 @@ This is the end product of the entire learning journey. Everything built and lea
 - [ ] `/ai-engineer:eval` — runs the eval pipeline and reports pass/fail score
 - [ ] `/ai-engineer:document` — updates CLAUDE.md, LEARNING_JOURNEY.md, and portfolio after a phase
 - [ ] `/ai-engineer:review` — reviews system prompts for enterprise patterns (caching, routing, injection defense)
+- [ ] `/ai-engineer:security-check` — post-change scan for exposure risk: new untracked files, secrets in tracked files, missing `.gitignore` patterns for generated artifacts (screenshots, logs, snapshots), overly broad token scopes
 
 ### Plugin structure
 - [ ] Create `.claude-plugin/plugin.json` with name, description, version, author
@@ -538,7 +539,8 @@ This is the end product of the entire learning journey. Everything built and lea
 - Prompt engineering patterns — system prompt template with caching, routing, injection defense
 - Model routing — `_pick_model()` pattern included in scaffolded code
 - RAG setup — ChromaDB + sentence-transformers wired up out of the box
-- Environment management — `.env` + `python-dotenv` standard
+- Environment management — `.env` + `python-dotenv` standard, saved as plain UTF-8 (no BOM) to avoid silent auth failures
+- Security-after-every-change discipline — `.gitignore` scaffolded to cover secrets, databases, vector stores, and any browser-automation/test output directories by default; no secret is ever printed to logs or chat, even for debugging
 
 **Success check:** A developer installs your plugin, runs `/ai-engineer:setup`, and gets a production-ready AI project scaffold with all enterprise standards baked in — in under 5 minutes
 
