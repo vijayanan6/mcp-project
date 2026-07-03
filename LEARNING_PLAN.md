@@ -50,6 +50,8 @@ Last updated: June 2026
 - [ ] Understand prompt injection — how users can hijack your system prompt and how to defend against it
 - [ ] Practice iterating on prompts and measuring behaviour change
 - [ ] Understand the difference between system prompt, user turn, and assistant turn
+- [ ] Understand **context engineering** as the broader term the industry now uses — not just the prompt text, but everything that ends up in the context window: system prompt, conversation history, RAG-retrieved chunks, and tool results. "Prompt engineering" is one piece of the larger discipline of deciding what Claude sees and when
+- [ ] Understand what cosine similarity actually measures — why two chunks of text with similar *meaning* end up as vectors that point in a similar *direction*, and why that's what makes `search_docs` work
 
 **Success check:** Rewrite your system prompt using chain-of-thought and few-shot patterns, then eval the difference in tool selection accuracy
 
@@ -97,8 +99,10 @@ Last updated: June 2026
 - [ ] Write async tests for FastAPI routes using `httpx.AsyncClient`
 - [ ] Test edge cases: bad input, missing files, empty notes
 - [ ] Run tests with `pytest -v` and read coverage output
+- [ ] Understand why testing AI systems is different from testing deterministic code — an LLM call with `temperature > 0` won't return the same string twice, so tests need to check *behavior* (did it call the right tool? is the answer within expected bounds?) instead of exact output matching
+- [ ] Write at least one test that asserts on structure/behavior rather than exact text (e.g. "response contains a valid note ID" not "response equals this exact string")
 
-**Success check:** `pytest` passes with tests covering all 8 MCP tools and the main API routes
+**Success check:** `pytest` passes with tests covering all 8 MCP tools and the main API routes, including at least one test that correctly handles non-deterministic output
 
 ---
 
@@ -109,6 +113,9 @@ Last updated: June 2026
 - [x] Run evals after every system prompt change to catch regressions
 - [ ] Implement LLM-as-judge to score open-ended response quality
 - [ ] Explore Promptfoo (open source) as an eval framework
+- [ ] Add RAG-quality evals, not just tool-selection evals — current evals check *did Claude call `search_docs`*, not *was the retrieved chunk actually correct, or was the answer faithful to it*
+- [ ] Learn the 3 core RAG metrics (the RAGAS framework popularized these): **faithfulness** (is the answer supported by the retrieved chunk, or did Claude make something up?), **context precision/recall** (did `search_docs` retrieve the right chunk, and only the right chunk?), **answer relevancy** (does the answer actually address the question asked?)
+- [ ] Write at least 3 test cases that check retrieval quality directly against `docs/` content, not just whether a tool was called
 
 **Result: 12/12 (100%) passing — evals/dataset.json + evals/run_evals.py**
 
@@ -160,6 +167,17 @@ Last updated: June 2026
 - [ ] Understand the difference between continuous integration and continuous deployment
 
 **Success check:** Pushing to GitHub automatically runs tests + evals. Failing tests block the push
+
+---
+
+### AI System Design Practice
+- [ ] Understand this is a distinct interview skill — reasoning through tradeoffs out loud, without writing code, not the same as *building* the thing
+- [ ] Practice designing (on paper/whiteboard, not code): "design a RAG system for searching legal documents" — chunking strategy, vector DB choice, caching, fallback behaviour
+- [ ] Practice designing: "design a multi-tenant AI support agent" — data isolation, cost tracking per tenant (you've built this part), rate limiting per tenant
+- [ ] Practice designing: "design a system to safely roll out a new system prompt to production" — versioning, canary rollout, rollback
+- [ ] For each design, be able to name the failure modes and how you'd detect them (this project's own observability dashboard is a real answer to "how would you detect it")
+
+**Success check:** Can talk through 2–3 AI system design scenarios out loud in under 10 minutes each, referencing real tradeoffs from this project as evidence
 
 ---
 
@@ -269,6 +287,19 @@ code.claude.com/docs/en/plugins-reference.md (schema)
 - [ ] Handle session persistence
 
 **Success check:** Full chat interface in React matching the current `chat.html` functionality
+
+---
+
+### Async/Background Jobs for AI Products
+Most real AI features aren't instant chat — they're "generate this report, come back in 30
+seconds." This project's chat is synchronous/streaming; a lot of production AI features
+(document summarisation, batch analysis, report generation) are not.
+- [ ] Understand why long-running AI tasks need a job queue instead of a blocking HTTP request
+- [ ] Learn one job queue pattern — Celery (general Python) or Cloud Tasks (GCP-native)
+- [ ] Build one async feature: submit a job → return a job ID immediately → poll (or webhook) for the result
+- [ ] Understand polling vs. webhooks vs. WebSockets for delivering the result once ready
+
+**Success check:** One feature in your app (e.g. "summarise all my docs") runs as a background job with a status the UI can poll, instead of blocking the request
 
 ---
 
@@ -397,11 +428,23 @@ This is the same abstraction used by LangChain, LiteLLM, and every enterprise AI
 - [ ] Set up alerts for failed tool calls
 - [ ] Experiment with prompt versions
 
+### Safe Rollout — MLOps for AI (not just "deploy it," but "safely change it once it's live")
+- [ ] Understand prompt/model versioning — treat a system prompt change like a code change, not a casual edit
+- [ ] Practice a canary rollout — route a small % of requests to a new system prompt or model, compare cost/quality/eval-pass-rate before rolling out to everyone
+- [ ] Understand A/B testing for prompts — same question, two prompt versions, compare eval scores
+- [ ] Know what a rollback looks like when a new prompt/model version regresses in production
+
 ### Advanced RAG
 - [ ] Implement hybrid search (keyword + semantic)
 - [ ] Add re-ranking (cross-encoder models)
 - [ ] Migrate ChromaDB to Vertex AI Vector Search on GCP
 - [ ] Replace sentence-transformers with Vertex AI Embeddings API
+- [ ] Conceptually compare the vector DB landscape — Pinecone (managed, easy), Weaviate (open source, hybrid search built-in), Qdrant (open source, fast), pgvector (simplest if already on Postgres) — know the tradeoffs even without hands-on time on all of them
+
+### Fine-Tuning Fundamentals (conceptual — not required to actually fine-tune anything)
+- [ ] Understand what fine-tuning actually changes (model weights) vs what RAG/prompting change (context only)
+- [ ] Understand LoRA/QLoRA at a conceptual level — why they make fine-tuning cheaper than full fine-tuning
+- [ ] Build a decision tree: when would you fine-tune vs use RAG vs just improve the prompt? (Most real products never need to fine-tune — knowing why is the actual skill)
 
 ### LangChain (optional)
 - [ ] Understand when to use LangChain vs raw SDK
