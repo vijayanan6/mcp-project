@@ -26,9 +26,9 @@ Last updated: June 2026
 - [x] Prompt evaluation — evals/dataset.json, run_evals.py, 12/12 passing
 - [x] Evaluating third-party MCP servers before install — publisher trust, access boundary, prompt-injection risk surface, project vs user scope
 - [x] Playwright MCP — browser automation for UI testing, wired into Claude Code at project scope
+- [x] Tool use fundamentals — `tool_choice` modes, forced tool calls, streaming tool_use blocks (beneath `tool_runner`)
 
 ### Not Yet Started ❌
-- [ ] Tool use fundamentals — `tool_choice` modes, forced tool calls, streaming tool_use blocks (beneath `tool_runner`)
 - [ ] MCP Inspector — visual debugger for MCP servers (test tools without a full client)
 - [ ] pytest — testing framework for MCP tools and FastAPI routes
 - [ ] MCP resources & prompts — the two MCP primitives beyond tools
