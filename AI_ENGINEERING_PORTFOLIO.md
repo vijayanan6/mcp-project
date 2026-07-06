@@ -269,6 +269,32 @@ Evals caught two real bugs that manual testing missed:
 
 ---
 
+### 12. Tool Use Internals — Beyond the SDK Abstraction
+
+This project's tool-calling (§1) runs on the Anthropic SDK's `tool_runner` helper. To understand what it actually automates, built the same mechanics by hand against this project's own `get_weather` and `manage_notes` tool schemas — no `tool_runner`, no MCP — in a standalone script (`tool_use_demo.py`).
+
+```python
+# Forcing a specific tool call — bypasses "auto" and any prompt-wording persuasion
+resp = client.messages.create(
+    model=MODEL, tools=[GET_WEATHER_TOOL],
+    tool_choice={"type": "tool", "name": "get_weather"},
+    messages=[{"role": "user", "content": "Tell me a fact about deserts"}],
+)
+# stop_reason is guaranteed "tool_use" — Claude still infers a best-guess
+# argument (city: "Sahara") rather than refusing, even though the prompt
+# never asked about weather
+```
+
+**Demonstrated, with real API calls and verified results:**
+- **`tool_choice` modes** — `auto` (Claude answered the desert question directly, no tool call) vs. forced `{"type": "tool", "name": "get_weather"}` (same prompt, tool call mandatory) — proved forcing constrains the *action*, not the model's judgment about arguments
+- **`disable_parallel_tool_use`** — a two-tool-inviting prompt produced 2 parallel `tool_use` blocks under `tool_choice: any`; adding `disable_parallel_tool_use: True` collapsed it to exactly 1
+- **Streaming tool arguments** — watched `input_json_delta` events arrive as raw, unparseable JSON fragments (`'{"cit'` → `'{"city": "'` → `'{"city": "Seattle"}'`), only valid once the content block closed — the layer `tool_runner` hides (its Python implementation returns complete messages, not token-level deltas)
+- **Manual multi-turn loop** — built the `tool_use` → execute → `tool_result` → loop cycle from scratch (save a note, read it back, 3 turns total), matching `tool_use_id` by hand and verifying the SQLite write actually persisted via `inspect_db.py` — not just trusting the model's summary
+
+**Why this matters:** every production framework (`tool_runner`, LangChain agents, LlamaIndex) is a convenience layer over these exact primitives. Understanding the raw request/response cycle means being able to debug or reimplement tool-calling behavior when the abstraction doesn't fit — e.g. adding human-in-the-loop approval before a tool executes, which requires the manual loop, not `tool_runner`.
+
+---
+
 ## Key Engineering Decisions
 
 | Decision | Why |

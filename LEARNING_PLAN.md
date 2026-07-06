@@ -28,6 +28,7 @@ Last updated: June 2026
 - [x] Playwright MCP — browser automation for UI testing, wired into Claude Code at project scope
 
 ### Not Yet Started ❌
+- [ ] Tool use fundamentals — `tool_choice` modes, forced tool calls, streaming tool_use blocks (beneath `tool_runner`)
 - [ ] MCP Inspector — visual debugger for MCP servers (test tools without a full client)
 - [ ] pytest — testing framework for MCP tools and FastAPI routes
 - [ ] MCP resources & prompts — the two MCP primitives beyond tools
@@ -57,6 +58,18 @@ Last updated: June 2026
 - [x] Understand what cosine similarity actually measures — why two chunks of text with similar *meaning* end up as vectors that point in a similar *direction*, and why that's what makes `search_docs` work (verified `rag.py`'s ChromaDB collection defaults to `hnsw:space="cosine"` via `SentenceTransformerEmbeddingFunction.default_space()`, confirming `score = 1 - distance` at [rag.py:175](rag.py#L175) is literal cosine similarity; demoed with zero-keyword-overlap sentences scoring 0.556 vs 0.09)
 
 **Success check:** Rewrite your system prompt using chain-of-thought and few-shot patterns, then eval the difference in tool selection accuracy
+
+---
+
+### Tool Use Fundamentals (API-Level, Beneath `tool_runner`) ✅
+- [x] Understand the raw `tool_use` / `tool_result` content block format that `tool_runner` abstracts away
+- [x] Learn `tool_choice` modes: `auto` (model decides, default), `any` (must call some tool), `tool` (force one specific tool), `none` (disable tool use for this call)
+- [x] Practice forcing a specific tool call with `tool_choice: {"type": "tool", "name": "..."}` and observe the difference vs `auto` (`tool_use_demo.py` — same ambiguous prompt answered directly under `auto`, forced into calling `get_weather` under `tool_choice: {"type": "tool", ...}`, inferring a best-guess argument rather than refusing)
+- [x] Understand `disable_parallel_tool_use` — when you'd want to prevent Claude from calling multiple tools in a single turn (demoed: `tool_choice: any` on a two-tool prompt called both tools in one turn; adding `disable_parallel_tool_use: True` collapsed it to one)
+- [x] Understand streaming tool use — how tool call arguments arrive as incremental JSON deltas (`input_json_delta`) rather than all at once (watched raw fragments assemble into valid JSON only once the block closed)
+- [x] Manually construct one multi-turn tool loop without `tool_runner` — build the follow-up request with a `tool_result` block yourself, to see exactly what the SDK automates (`tool_use_demo.py` §5 — save-then-read note loop, verified the SQLite write with `inspect_db.py`)
+
+**Result: all 6 items demoed hands-on in `tool_use_demo.py` — can explain what `tool_runner` does under the hood, and can force Claude to call a specific tool via `tool_choice` instead of relying on prompt wording alone**
 
 ---
 
