@@ -47,14 +47,14 @@ Last updated: June 2026
 - [x] Understand system prompt design — how Claude reads and prioritises instructions
 - [x] Learn few-shot prompting — giving Claude examples inside the prompt to shape behaviour (applied to `SYSTEM_PROMPT`; found and fixed a lexical-overlap regression — see Phase 15)
 - [ ] Learn chain-of-thought prompting — asking Claude to reason step by step before answering (covered conceptually — deliberately not applied to this routing prompt; CoT's token/latency cost isn't justified for a simple tool-routing decision)
-- [ ] Understand prompt injection — how users can hijack your system prompt and how to defend against it
+- [x] Understand prompt injection — how users can hijack your system prompt and how to defend against it (direct: user hijacks own chat; indirect: malicious text in a retrieved doc — the real risk for `search_docs`/`read_doc`. Defended via `<security>` tag in `SYSTEM_PROMPT` telling Claude tool results are data, not instructions — see `api.py`)
 - [x] Practice iterating on prompts and measuring behaviour change (rewrote prompt → eval regressed 12/12 → 10/12 → diagnosed root cause → fixed)
-- [ ] Understand the difference between system prompt, user turn, and assistant turn
+- [x] Understand the difference between system prompt, user turn, and assistant turn
 - [x] Learn role prompting — giving Claude a scoped persona/job in the system prompt (not just "a helpful assistant") to reduce ambiguous behaviour at the edges
 - [x] Learn XML tag structuring — wrapping instructions, examples, and rules in tags (`<instructions>`, `<examples>`, `<rules>`) so Claude parses precedence reliably as a prompt grows past one prose block
-- [ ] Learn response prefilling — seeding the start of Claude's turn (e.g. `{` ) to force a response format; the technique Phase 5 (Structured Outputs) depends on
-- [ ] Understand **context engineering** as the broader term the industry now uses — not just the prompt text, but everything that ends up in the context window: system prompt, conversation history, RAG-retrieved chunks, and tool results. "Prompt engineering" is one piece of the larger discipline of deciding what Claude sees and when
-- [ ] Understand what cosine similarity actually measures — why two chunks of text with similar *meaning* end up as vectors that point in a similar *direction*, and why that's what makes `search_docs` work
+- [x] Learn response prefilling — the classic technique (seeding the assistant turn with `{` to force JSON) now returns a hard 400 on current models (Sonnet 4.6/5, Opus 4.6+, Fable 5) — confirmed `claude-sonnet-4-6` is in the blocked list, meaning it would break mid-router-switch in this app. Modern replacement, verified supported on both routed models (`claude-sonnet-4-6`, `claude-haiku-4-5`) via a live Models API capability check: `output_config.format` / `client.messages.parse()` with a Pydantic model — this is what Phase 5 (Structured Outputs) will actually use
+- [x] Understand **context engineering** as the broader term the industry now uses — not just the prompt text, but everything that ends up in the context window: system prompt, conversation history, RAG-retrieved chunks, and tool results. "Prompt engineering" is one piece of the larger discipline of deciding what Claude sees and when (mapped each category to real code: `SYSTEM_PROMPT`, `HISTORY_LIMIT`, `search_docs` chunking, `read_doc`'s 8000-char cap, and `_safe_window()`'s tool_use/tool_result pairing — every cap in the app is a context-engineering tradeoff)
+- [x] Understand what cosine similarity actually measures — why two chunks of text with similar *meaning* end up as vectors that point in a similar *direction*, and why that's what makes `search_docs` work (verified `rag.py`'s ChromaDB collection defaults to `hnsw:space="cosine"` via `SentenceTransformerEmbeddingFunction.default_space()`, confirming `score = 1 - distance` at [rag.py:175](rag.py#L175) is literal cosine similarity; demoed with zero-keyword-overlap sentences scoring 0.556 vs 0.09)
 
 **Success check:** Rewrite your system prompt using chain-of-thought and few-shot patterns, then eval the difference in tool selection accuracy
 
@@ -73,8 +73,8 @@ Last updated: June 2026
 ---
 
 ### Security Fundamentals for AI Apps
-- [ ] Understand prompt injection — user input that overrides your system prompt
-- [ ] Sanitise user input before passing to Claude — strip control characters, cap length
+- [x] Understand prompt injection — user input that overrides your system prompt (see Prompt Engineering Fundamentals above)
+- [x] Sanitise user input before passing to Claude — strip control characters, cap length (`_sanitize_input()` in `api.py`, applied in both `/chat` and `/stream`)
 - [ ] Validate all tool inputs in `mcp_server.py` — never trust Claude's arguments blindly
 - [ ] Understand path traversal — already implemented in `read_doc`, understand why it matters
 - [ ] Never expose raw error messages to the browser — they leak implementation details

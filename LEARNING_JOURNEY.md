@@ -851,6 +851,33 @@ Added a "reset spend tracking" option to the cost dashboard's credit banner, so 
 
 ---
 
+## Phase 17 — Prompt Injection Defense, Cosine Similarity, and an API-Drift Catch
+
+### What We Built
+Closed out the remaining Prompt Engineering Fundamentals items: added an indirect-prompt-injection defense and input sanitization to `api.py`, verified (rather than assumed) how `search_docs` actually ranks results, mapped context engineering onto real code, and caught that the learning plan's own "response prefilling" item described a technique that no longer works on this project's models.
+
+### Key Concepts Learned
+
+**Indirect prompt injection is the real risk in a RAG pipeline, not direct injection.** A user typing "ignore your instructions" only hijacks their own chat. The dangerous case is a `docs/` file containing text that *looks* like an instruction — since `search_docs`/`read_doc` results flow back into Claude's context as `tool_result` blocks, indistinguishable from a real instruction unless told otherwise. Added a `<security>` tag to `SYSTEM_PROMPT` stating tool results are data, not commands — verified via eval run (11/12, the one miss a timeout on an already-slow case, not a routing regression) that this didn't change tool-selection behavior.
+
+**Sanitization is the cheap layer, not the real defense.** `_sanitize_input()` (strip non-printable chars, cap at 4000 chars) stops noise and context-window abuse, but doesn't address indirect injection at all — that's the system-prompt tag's job. Conflating the two would have meant shipping only the weak half.
+
+**Verify a "why does this work" claim against the actual installed library, not the docstring's assertion.** `rag.py`'s docstring says distance `< 0.8` is "relevant" without stating *which* distance metric. Checked the installed `chromadb` (v1.5.9) source directly: `SentenceTransformerEmbeddingFunction.default_space()` returns `"cosine"`, confirming `rag.py`'s `score = round(1 - distance, 3)` is literally the cosine-similarity formula, not an arbitrary scoring convention. Then demoed it live with the project's own embedding model: two paraphrased sentences sharing zero words scored 0.556, versus 0.09–0.065 for unrelated pairs — proof the ranking is genuinely meaning-based, not keyword overlap dressed up as semantic search.
+
+**Context engineering is a synthesis label for decisions this project already made, not a new technique to bolt on.** `SYSTEM_PROMPT`, `HISTORY_LIMIT`, `search_docs`'s chunk size, `read_doc`'s 8000-char cap, and `_safe_window()`'s tool_use/tool_result pairing are all context-window budget decisions. Recognizing them as one discipline (not five unrelated caps) is the actual learning outcome — there was no code left to write for this item.
+
+**A skill's own API-drift warning caught a stale plan item before it caused a runtime error.** The learning plan described response prefilling (seeding an assistant turn with `{` to force JSON) as a prerequisite for Phase 5. Checking current Anthropic docs: assistant-turn prefill returns a hard `400` on the entire current model generation (Opus 4.6+, Sonnet 4.6+, Fable 5) — and `claude-sonnet-4-6`, one of this project's own two routed models, is on that blocked list. Confirmed live via `client.models.retrieve()` (a free metadata call, no completion cost) that both routed models (`claude-sonnet-4-6`, `claude-haiku-4-5`) support `structured_outputs` instead — the correct current replacement, and a better fit for Phase 5's planned `{title, content, tags}` note-extraction than prefilling would have been anyway. **Generalizable principle: for a fast-moving API, a documented "next step" in a personal learning plan can go stale between when it was written and when you act on it — check the current API surface before building on a remembered technique, especially one a model's own training data might misremember as still current.**
+
+### Before vs After
+| | Before | After |
+|---|---|---|
+| Indirect prompt injection | Undefended — doc/note content could be read as instructions | `<security>` tag in `SYSTEM_PROMPT`; `search_docs`/`read_doc`/`list_docs`/`manage_notes` results explicitly marked as data |
+| User input | Passed to history/model unmodified | `_sanitize_input()` strips control chars, caps at 4000 chars |
+| Cosine-similarity claim in `rag.py` | Asserted in a comment, unverified | Confirmed against installed `chromadb` source + live demo with the project's own model |
+| "Response prefilling" plan item | Described a technique that 400s on this project's own routed model | Corrected to `output_config.format` / `client.messages.parse()`, verified supported on both models via Models API |
+
+---
+
 ## Final Architecture
 
 ```

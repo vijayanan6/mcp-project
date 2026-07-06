@@ -225,6 +225,30 @@ A correct calculation attached to a misleading name is still a bug — just one 
 
 ---
 
+## 22. The Real Injection Risk in RAG Is Indirect, Not Direct
+
+A user typing "ignore your instructions" only hijacks their own conversation — low stakes. The dangerous case is a document sitting in `docs/` that contains text shaped like an instruction, because `search_docs` and `read_doc` return that content as a `tool_result`, and a `tool_result` looks identical to a real instruction unless Claude is told otherwise.
+
+Any system that retrieves external content into an LLM's context — a document store, a web search, a scraped page — has this exposure by default. The fix isn't input filtering (that only catches the user's own words); it's telling the model explicitly, in the system prompt, that retrieved content is data to report on, never a command to obey.
+
+---
+
+## 23. Verify a "Why It Works" Claim Against the Library, Not the Comment Above It
+
+`rag.py`'s docstring asserted that a distance under 0.8 counts as "relevant" without saying which distance metric ChromaDB was actually using. Checking the installed `chromadb` source directly showed the embedding function's `default_space()` returns `"cosine"` — confirming the scoring line was literally computing cosine similarity, not an arbitrary convention that happened to work.
+
+A comment describing *why* code works is a claim, not a fact — it can be stale, incomplete, or simply wrong the moment a dependency changes its defaults. When a "why" matters enough to build understanding on, check it against the actual installed version, not the explanation someone (including a past version of yourself) wrote next to it.
+
+---
+
+## 24. A Personal Learning Plan Can Go Stale Before You Act On It
+
+An item written weeks earlier described "response prefilling" as a prerequisite for a later phase. By the time it came up, the technique it described — seeding an assistant turn to force JSON — returned a hard error on the exact model this project routes to. The plan wasn't wrong when written; the API moved.
+
+The same applies to anything else written down as "the way to do X" in a fast-moving field: a plan, a note, a remembered pattern from training data. Before building on a described technique, check whether it still matches the current surface — especially when the source is your own past notes, which nobody has an incentive to flag as outdated the way a deprecation warning does.
+
+---
+
 ## The Core Takeaway
 
 You started wanting to understand MCP.
