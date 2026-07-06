@@ -249,6 +249,14 @@ The same applies to anything else written down as "the way to do X" in a fast-mo
 
 ---
 
+## 25. A Completed Checkbox Can Hide an Unlearned Primitive Underneath It
+
+"MCP (Model Context Protocol) — server, tools, stdio transport" was checked off in the learning plan from the very first phase, and that checkmark quietly stood in for "tool use, generally." It didn't actually cover it: building MCP tools and running them through `tool_runner` never required touching `tool_choice`, `disable_parallel_tool_use`, or reading a raw streamed `input_json_delta` — the SDK helper abstracts all of it away. The gap sat there, invisible, until it was asked about directly.
+
+A high-level checkbox names a topic; it doesn't guarantee every layer underneath that topic got learned. The habit worth building isn't "trust the checkmark" — it's periodically asking, of any "done" item that names a broad concept, *what's the abstraction hiding, and have I actually seen underneath it?* This is the same shape as a passing test suite that never exercised an edge case: green doesn't mean covered, it means covered *for what was checked*.
+
+---
+
 ## The Core Takeaway
 
 You started wanting to understand MCP.

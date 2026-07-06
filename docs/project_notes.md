@@ -106,6 +106,7 @@ api.py (FastAPI web server)
 | `rag.py` | ChromaDB indexing + semantic search |
 | `convert_pdfs.py` | Tesseract OCR for scanned PDFs |
 | `inspect_db.py` | Utility to view SQLite contents |
+| `tool_use_demo.py` | Tool Use Fundamentals demo — raw SDK, no `tool_runner` |
 | `templates/chat.html` | Browser chat UI |
 | `CLAUDE.md` | Guidance for Claude Code |
 | `README.md` | Project documentation |

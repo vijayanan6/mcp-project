@@ -24,6 +24,9 @@ python convert_pdfs.py
 
 # Inspect SQLite database contents
 python inspect_db.py
+
+# Tool Use Fundamentals demo (WARNING: consumes API credits — ~6 short Claude API calls)
+python tool_use_demo.py
 ```
 
 Tesseract must be installed at `C:\Program Files\Tesseract-OCR\` for `convert_pdfs.py` to work.

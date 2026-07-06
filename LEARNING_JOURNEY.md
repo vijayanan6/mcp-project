@@ -878,6 +878,35 @@ Closed out the remaining Prompt Engineering Fundamentals items: added an indirec
 
 ---
 
+## Phase 18 — Tool Use Fundamentals: The API Primitives Beneath `tool_runner`
+
+### What We Built
+Closed the "Tool Use Fundamentals" gap in `LEARNING_PLAN.md` — a category the plan's own "MCP (Model Context Protocol)" checkbox had silently masked. Built `tool_use_demo.py`, a standalone script using the raw Anthropic SDK (no MCP, no `tool_runner`) against this project's own `get_weather` and `manage_notes` tool schemas, to see the mechanics `tool_runner` normally hides.
+
+### Key Concepts Learned
+
+**A completed high-level checkbox can hide an unlearned primitive underneath it.** "MCP (Model Context Protocol) — server, tools, stdio transport" was checked off at the top of `LEARNING_PLAN.md` from Phase 1 onward, and that checkmark got treated as covering tool use in general. It didn't: building MCP tools and looping them through `tool_runner` never required touching `tool_choice`, `disable_parallel_tool_use`, or raw `input_json_delta` streaming — `tool_runner` abstracts all of it away. The gap only surfaced because it was asked about directly, not because anyone was auditing the "Completed" list for what a checkmark actually covers. **Generalizable principle: the same failure pattern applies to any completed checkbox that names a broad topic — check what's *underneath* the abstraction it references, not just whether the abstraction itself works.**
+
+**Forcing a tool constrains the action, not the model's judgment about arguments.** Live test: an ambiguous prompt ("Tell me an interesting fact about deserts") answered directly under `tool_choice: {"type": "auto"}` — no tool called. The *identical* prompt under `tool_choice: {"type": "tool", "name": "get_weather"}` was forced into calling the tool, but Claude didn't refuse or error — it inferred a best-guess argument (`city: "Sahara"`) from context. The API-level guarantee is "a tool_use block for this tool will exist in the response," not "Claude will make sense of being forced."
+
+**`disable_parallel_tool_use` is provably binary, not just documented behavior.** With two tools available and a prompt inviting both ("What's the weather in Tokyo, and also list my saved notes?"), `tool_choice: {"type": "any"}` produced two `tool_use` blocks in one response. Adding `disable_parallel_tool_use: True` to the same `tool_choice` collapsed it to exactly one. Confirmed by counting blocks, not by trusting the parameter's description.
+
+**Streaming tool arguments arrive as unparseable fragments until the block closes — and `tool_runner` doesn't expose this at all.** Watched raw `input_json_delta` events accumulate: `''` → `'{"cit'` → `'{"city": "'` → `'{"city": "Seattle"}'` — only the last fragment is valid JSON. The Python `tool_runner` returns complete messages per iteration, not token-level deltas, so this layer is invisible unless you drop to a manual `client.messages.stream()` call, which is exactly why `api.py`'s `/stream` endpoint streams whole messages to the browser rather than live tool-argument deltas.
+
+**A manual multi-turn loop is the same three steps every time, and skipping any one of them breaks it.** Built the `tool_use` → execute → `tool_result` → loop cycle from scratch against `manage_notes` (save a note, then read it back — 3 turns). The three things that bite on a first attempt: (1) the full `response.content` — including `tool_use` blocks — must be appended as the assistant turn before the `tool_result` follow-up, or Claude has no record of its own call; (2) multiple `tool_result` blocks from one parallel response must batch into a single `user` message, not split across several; (3) `tool_use_id` must match exactly. Verified the loop actually worked by checking `inspect_db.py` for the real SQLite write afterward — not by trusting the model's own summary of what it did.
+
+**A stale documentation contradiction is easy to introduce and easy to miss.** After checking off the new Tool Use Fundamentals section in the detailed body of `LEARNING_PLAN.md`, the top-level summary list under "Not Yet Started" still carried the old unchecked line — caught only because it was pointed out directly, not by re-reading the file end-to-end after editing it. **Generalizable principle: a document with the same fact stated in two places (a detailed section and a rolled-up summary) needs both edited together, or it silently self-contradicts.**
+
+### Before vs After
+| | Before | After |
+|---|---|---|
+| Tool use knowledge | Used `tool_runner` successfully, never saw what it does internally | Can explain `tool_choice` modes, force a specific tool, toggle parallel calls, read raw streaming deltas, and rebuild the loop by hand |
+| `LEARNING_PLAN.md` | "Tool Use Fundamentals" wasn't a tracked item at all | New section added, all 6 items demoed and checked off; top-level summary list corrected to match |
+| Verification method | N/A | `tool_use_demo.py` — 6 real API calls, results checked against actual behavior (block counts, streamed fragments, a genuine SQLite row via `inspect_db.py`) instead of assumed from documentation |
+| Portfolio | No coverage of tool-use internals | New §12 in `AI_ENGINEERING_PORTFOLIO.md` — framed as understanding the primitives every tool-calling framework (`tool_runner`, LangChain, LlamaIndex) wraps |
+
+---
+
 ## Final Architecture
 
 ```

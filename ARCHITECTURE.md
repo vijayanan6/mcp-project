@@ -116,6 +116,16 @@ Standalone script for converting scanned PDFs to readable text.
 Utility script that prints the contents of SQLite (notes and sessions).
 Useful for debugging or verifying what's stored.
 
+### tool_use_demo.py — Tool Use Fundamentals Demo
+Standalone script using the raw Anthropic SDK directly (no MCP server, no `tool_runner`)
+against this project's own `get_weather` and `manage_notes` tool schemas.
+
+- Demonstrates `tool_choice` modes (`auto` vs. forcing a specific tool)
+- Demonstrates `disable_parallel_tool_use`
+- Streams a tool call and prints the raw `input_json_delta` fragments as they arrive
+- Builds one multi-turn tool loop by hand — no `tool_runner` — to show what the SDK helper automates
+- Makes real Claude API calls (small cost) — see `CLAUDE.md` for the run command
+
 ---
 
 ## The 8 MCP Tools
@@ -348,6 +358,7 @@ MCP Project/
 ├── rag.py              ChromaDB helpers — chunk, embed, index, search
 ├── convert_pdfs.py     PDF OCR — pymupdf + Tesseract → txt
 ├── inspect_db.py       Utility — print SQLite contents
+├── tool_use_demo.py    Tool Use Fundamentals demo — raw SDK, no tool_runner
 │
 ├── templates/
 │   ├── chat.html       Browser chat UI — SSE streaming, session storage, credit alert badge

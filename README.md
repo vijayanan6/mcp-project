@@ -25,6 +25,7 @@ MCP Project/
 ├── rag.py                   — ChromaDB semantic search
 ├── convert_pdfs.py          — Tesseract OCR for scanned PDFs
 ├── inspect_db.py            — Utility to view SQLite contents
+├── tool_use_demo.py         — Tool Use Fundamentals demo (WARNING: consumes API credits)
 ├── templates/
 │   ├── chat.html            — Browser chat UI (SSE streaming, credit alert badge)
 │   └── usage.html           — AI Cost Dashboard (tokens, cost, forecast, multi-project)
