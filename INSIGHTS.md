@@ -185,6 +185,38 @@ The fix wasn't complicated. The discipline was remembering to look: after *every
 
 ---
 
+## 17. Few-Shot Examples Teach by Surface Resemblance, Not Intent
+
+Adding few-shot examples to `SYSTEM_PROMPT` caused a measured eval regression (12/12 → 10/12), not an improvement. The `list_docs` example ("What documents do I have?") and a failing test case ("summarize all the documents in my system") shared surface wording — "documents", "all... in my system" — and Claude followed the lexical resemblance instead of the intended semantic split (enumerate files vs. synthesize content).
+
+A rule degrades gracefully at the margins because it's stated as a principle. An example only teaches the pattern it happens to resemble — the closer a new case's *wording* sits to an example, the more it gets pulled toward that example's answer, even when the underlying intent differs. Tuning few-shot examples means checking them against realistic edge cases, not just confirming they read sensibly in isolation.
+
+---
+
+## 18. A Test Harness That Defaults Missing Fields to "Pass" Hides Its Own Failures
+
+The eval regression above surfaced a second, unrelated bug: `run_evals.py`'s printer read `result.get("tool_pass", True)`, defaulting to "pass" whenever a field was absent. On a timeout, the result dict legitimately has no `tool_pass` key at all — so the printer rendered `OK OK` icons for a case that had actually thrown an exception, hiding the real error message entirely.
+
+Any monitor, printer, or test harness that treats "field missing" the same as "check passed" will stay silent exactly when something breaks in a way the code didn't anticipate. The safe default for an unknown state is to surface it, not to assume success.
+
+---
+
+## 19. A "Last Value" Slot Is a Silent Data-Loss Trap
+
+Building a credit-reset feature, the first version stored one `prev_period` snapshot with no protection. While testing it, a retried tool call fired the save function twice within 44 seconds — the second reset silently overwrote the first, real snapshot with an empty one. Nothing errored. Nothing warned. The data was just gone.
+
+Any design that holds "the most recent X" in a single slot instead of a list is one accidental double-write away from losing whatever was there before — and because overwriting isn't an error, nothing surfaces the loss until a human notices the data doesn't match what they expected. The fix wasn't a smarter data structure — it was a confirmation prompt naming exactly what would be overwritten, so the human has to actively choose to discard it.
+
+---
+
+## 20. Re-Verifying a Fix Can Surface a Different Bug Than the One You Were Checking
+
+Re-running the eval suite to confirm a prompt fix instead hit a client timeout on both previously-failing cases — the tool-routing question was never actually answered, because the requests never finished. It would have been easy to read "still 2 failures" as "the fix didn't work." It wasn't the same failure: the error message (`ERROR: timed out`, not a wrong-tool note) said so plainly, once the harness was fixed to show it.
+
+The lesson isn't about this one bug — it's about the habit: when a re-run to verify fix A still shows failures, read what actually failed before concluding A didn't work. The two most common false readings are "nothing changed" (when the failure mode is actually different) and "everything's fine now" (when a flaky pass hid a real intermittent issue). Both require looking at the specific error, not just the pass/fail count.
+
+---
+
 ## The Core Takeaway
 
 You started wanting to understand MCP.

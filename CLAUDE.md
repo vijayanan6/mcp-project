@@ -68,9 +68,19 @@ Browser ──HTTP/SSE──► api.py ──stdio/JSON-RPC──► mcp_server.
 `GET  /usage`         — visual HTML dashboard (token usage, cost, daily chart, per-session table)
 `GET  /usage/data`    — JSON: totals, by_model, by_day, by_session, by_tool, by_project, credit config
 `GET  /usage/data?project=name` — same but filtered to one project
-`POST /usage/credit`  — save starting balance and alert threshold `{ starting_balance: 5.00, alert_threshold: 1.00 }`
+`POST /usage/credit`  — save starting balance and alert threshold `{ starting_balance: 5.00, alert_threshold: 1.00, reset: false }`
 
 Features: credit balance tracker, burn rate ($/day), days remaining, 30/60/90-day cost forecast, per-session cost table, cost by tool, cost by project, low-credit alert badge in chat header (pulses red when remaining < threshold).
+
+### Resetting Spend Tracking (Balance Top-Ups)
+
+A real Anthropic account top-up doesn't mean past spend should keep counting against the new balance. The "Reset spend tracking" checkbox in the credit banner (with a confirm prompt, since it overwrites the single archived snapshot below) sets `reset: true` on `POST /usage/credit`, which:
+
+- Starts a new tracking period from now (`credit_config.period_start`) — remaining balance, burn rate, and forecasts recalculate from that point forward.
+- Archives the outgoing period's totals into `prev_period_cost_usd` / `prev_period_days` / `prev_period_end` — a **single slot**, overwritten on every reset. There's a confirm dialog specifically because this data isn't recoverable if you reset twice in a row.
+- **Never touches `usage_logs`.** All historical charts (daily chart, per-model, per-session, per-project tables) always show full lifetime data regardless of resets — only the credit banner's live remaining/burn-rate math is period-scoped.
+
+`database.py`'s `credit_status(project=None)` computes the live period's spend/active-days (falling back to all-time totals if never reset, so existing installs behave unchanged). The dashboard JS falls back to the *previous* period's burn rate — marked `(est.)` with a tooltip — for forecasting in the gap right after a reset, before any usage has landed in the new period; it switches to real numbers once a request is logged.
 
 ## Multi-Project Support — How to Wire Up a New Project
 

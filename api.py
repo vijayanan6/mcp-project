@@ -31,7 +31,7 @@ from anthropic import AsyncAnthropic
 from anthropic.lib.tools.mcp import async_mcp_tool
 from mcp import ClientSession
 from mcp.client.stdio import StdioServerParameters, stdio_client
-from database import init_db, session_get, session_save, session_list, session_delete, usage_log, usage_summary, credit_get, credit_set
+from database import init_db, session_get, session_save, session_list, session_delete, usage_log, usage_summary, credit_status, credit_set
 
 SERVER_SCRIPT = str(Path(__file__).parent / "mcp_server.py")
 
@@ -139,26 +139,34 @@ async def usage_dashboard():
 async def usage_data(project: str = None):
     """Return aggregated token usage, cost data, and credit config as JSON."""
     data = usage_summary(project=project)
-    data["credit"] = credit_get()
+    data["credit"] = credit_status(project=project)
     return data
 
 
 class CreditRequest(BaseModel):
     starting_balance: float
     alert_threshold: float = 1.0
+    reset: bool = False
 
 @app.post("/usage/credit")
 async def save_credit(req: CreditRequest):
-    """Save the user's starting Anthropic credit balance."""
-    credit_set(req.starting_balance, req.alert_threshold)
-    return {"saved": True, "starting_balance": req.starting_balance}
+    """Save the user's starting Anthropic credit balance. reset=True starts a fresh
+    spend-tracking period from now, archiving the outgoing period's totals — never
+    deletes usage_logs, so historical charts are unaffected."""
+    credit_set(req.starting_balance, req.alert_threshold, reset=req.reset)
+    return {"saved": True, "starting_balance": req.starting_balance, "reset": req.reset}
 
 
 SYSTEM_PROMPT = [
     {
         "type": "text",
         "text": (
-            "You are a helpful assistant with access to tools.\n\n"
+            "<role>\n"
+            "You are a document-retrieval assistant with access to tools. Your job is to "
+            "ground any topic-specific answer in the user's own documents before falling "
+            "back to general knowledge.\n"
+            "</role>\n\n"
+            "<tool_routing_rules>\n"
             "For any question about a specific topic, subject, person, or project, "
             "ALWAYS call search_docs first — do NOT call list_docs first. "
             "search_docs searches document content semantically and is always preferred. "
@@ -167,7 +175,19 @@ SYSTEM_PROMPT = [
             "Only skip search_docs for clearly general questions (math, current time, weather, etc.) "
             "that could not possibly be in a document.\n\n"
             "If search_docs returns nothing useful, answer from general knowledge. "
-            "If documents are not yet indexed, call index_docs first."
+            "If documents are not yet indexed, call index_docs first.\n"
+            "</tool_routing_rules>\n\n"
+            "<examples>\n"
+            "User: \"What files are in my docs folder?\" -> call list_docs "
+            "(asking to enumerate filenames, not their content)\n"
+            "User: \"Summarize my project notes\" -> call search_docs (topic-specific content)\n"
+            "User: \"Analyze and summarize all the documents in my system, including key themes\" "
+            "-> call search_docs, NOT list_docs (this asks to synthesize document *content* "
+            "across everything indexed, not to enumerate filenames)\n"
+            "User: \"What is 25 * 4?\" -> no tool call, answer directly (general math)\n"
+            "User: \"What's the weather in London?\" -> call get_weather (general utility, not a doc topic)\n"
+            "User: \"hi\" -> no tool call, respond conversationally\n"
+            "</examples>"
         ),
         "cache_control": {"type": "ephemeral"},
     }
@@ -217,7 +237,18 @@ async def chat(req: ChatRequest):
     response_text = ""
     tools_used = []
 
+    # Accumulate usage across all runner turns (one turn per tool round-trip)
+    total_input = total_cache_write = total_cache_read = total_output = 0
+    has_usage = False
+
     async for msg in runner:
+        if hasattr(msg, "usage") and msg.usage:
+            u = msg.usage
+            total_input += u.input_tokens
+            total_cache_write += getattr(u, "cache_creation_input_tokens", 0)
+            total_cache_read += getattr(u, "cache_read_input_tokens", 0)
+            total_output += u.output_tokens
+            has_usage = True
         for block in msg.content:
             if block.type == "tool_use":
                 tools_used.append(block.name)
@@ -226,6 +257,10 @@ async def chat(req: ChatRequest):
 
     history.append({"role": "assistant", "content": response_text})
     session_save(session_id, history)
+
+    # Persist token usage to SQLite for cost dashboard
+    if has_usage:
+        usage_log(session_id, model, total_input, total_cache_write, total_cache_read, total_output, tools=tools_used, project="mcp-project")
 
     return {
         "session_id": session_id,

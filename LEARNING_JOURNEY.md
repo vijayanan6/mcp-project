@@ -795,6 +795,59 @@ Added Playwright MCP as a project-scoped MCP server so Claude Code can drive the
 
 ---
 
+## Phase 15 — Prompt Engineering Fundamentals Applied to `SYSTEM_PROMPT`
+
+### What We Built
+Rewrote `api.py`'s `SYSTEM_PROMPT` using three Anthropic-documented prompt engineering techniques — role prompting, XML tag structuring, and few-shot examples — then ran the eval suite to measure the real effect, per the Learning Plan's success check. Also fixed a bug the eval run itself exposed.
+
+### Key Concepts Learned
+
+**Role prompting** — a scoped persona ("You are a document-retrieval assistant...") biases borderline decisions in a consistent direction, unlike a generic "helpful assistant" role which gives Claude no default lean when a question is ambiguous. Critical caveat discovered: a role must not *contradict* an explicit rule elsewhere in the prompt (e.g. a "refuses to answer anything not in the docs" persona directly fighting a "fall back to general knowledge" rule) — a role is a bias, not an override, and conflicting instructions produce unpredictable behavior rather than a clean resolution.
+
+**XML tag structuring** — Claude was trained to treat tags like `<role>`, `<tool_routing_rules>`, `<examples>` as reliable structural boundaries. The tag *name* itself is content Claude reads before parsing what's inside — `<tool_routing_rules>` vs `<section1>` primes interpretation and gives Claude a category to reason about precedence with, the same way a well-named function primes a human reader before they see the body.
+
+**Few-shot prompting — and its real failure mode.** Added 5 input→action example pairs to `SYSTEM_PROMPT`. First iteration caused a **measured regression**: eval score dropped from 12/12 to 10/12. Root cause: the `list_docs` example ("What documents do I have?") shared surface-level wording ("documents", "all... in my system") with a `search_docs` test case ("summarize all the documents in my system"), and Claude pattern-matched on the lexical overlap instead of the intended semantic distinction (enumerate filenames vs. synthesize content). **Generalizable lesson: few-shot examples anchor on surface features present in the example text, not necessarily the deeper rule intended — the closer an example's wording sits to a real case, the more it can pull that case toward the wrong answer.** Fixed by rewording the `list_docs` example to unambiguous "enumerate filenames" language and adding an explicit example matching the exact failing pattern.
+
+**A latent bug the eval regression exposed** — `evals/run_evals.py`'s printer used `result.get("tool_pass", True)` to render pass/fail icons. On an exception (timeout, connection error), `run_case` returns a dict with no `tool_pass`/`model_pass` keys at all — so the default silently rendered `OK OK` icons even though the case genuinely failed, hiding the real cause. **Generalizable lesson: a test/eval harness that defaults missing fields to "pass" hides its own failure mode — the same class of bug as a monitor that only greps for a success marker and stays silent on a crash.** Fixed by detecting the `error` key explicitly and printing the actual exception message instead of defaulting the icons.
+
+**Message Batches API is not a fit for interactive eval loops** — Batches offer a real 50% token discount, but (1) latency is "usually within an hour, up to 24 hours" — incompatible with an iterate-and-measure workflow, and (2) they don't support the interactive tool-call loop `tool_runner` provides (call tool → execute → continue) within one submission; continuing a tool-using conversation via batches means a second full batch submission and another multi-hour wait. Batching is the right lever for high-volume, non-interactive, single-turn workloads — not for a 12-case suite you re-run while tuning a prompt. Prompt caching and model routing (both already in this project) are the correct cost levers for this shape of workload.
+
+### Before vs After
+| | Before | After |
+|---|---|---|
+| `SYSTEM_PROMPT` structure | One undifferentiated prose block | `<role>` / `<tool_routing_rules>` / `<examples>` tagged sections |
+| Few-shot examples | None | 5 input→action pairs, tuned to avoid lexical-overlap misrouting |
+| Eval score | 12/12 (no few-shot) | 10/12 → regression diagnosed → fix applied (re-verification pending, deferred to save API credits) |
+| Eval harness failure reporting | Timeouts silently rendered as "OK OK" | Exceptions print the real error message |
+
+---
+
+## Phase 16 — Non-Destructive Credit Reset & the Cost of Testing Destructive Actions
+
+### What We Built
+Added a "reset spend tracking" option to the cost dashboard's credit banner, so a real Anthropic balance top-up doesn't get blended with lifetime spend when computing remaining balance, burn rate, and forecasts. Also re-ran the eval suite to try to verify the Phase 15 prompt fix, which surfaced a genuinely new finding instead of a confirmation.
+
+### Key Concepts Learned
+
+**Filter, don't delete, when "resetting" a metric.** The naive fix would have been to zero out or archive `usage_logs`. Instead, `credit_config` got a `period_start` column: `credit_status()` sums spend/active-days only `WHERE created_at >= period_start` (falling back to all-time when never reset, so existing installs are unaffected). Every historical chart (`by_day`, `by_model`, `by_session`, `by_project`) keeps querying the full table regardless. **Generalizable principle: when a metric needs to "start over," add a timestamp filter to the read path — never delete or mutate the underlying event log.** The log is the source of truth; the metric is a view over it.
+
+**A single-slot cache of "the last thing" is a real hazard, proven by causing it.** The first version stored one `prev_period_*` snapshot with no protection. While testing the feature, a retried tool call fired `saveCredit()` twice in ~44 seconds — the second reset silently overwrote the first (real, useful) snapshot with an empty one. **Generalizable principle: any time a design holds "the most recent X" in a single slot instead of a list, a second write before you've consumed the first will destroy data with no warning.** The fix — a `confirm()` dialog before any reset, naming exactly what gets overwritten — doesn't solve the single-slot limitation, but it stops the silent, accidental case. (A more complete fix would be a list of archived periods instead of one slot — noted as a possible future improvement, not built.)
+
+**Testing a "destructive-to-metadata" UI action with a confirm dialog needs the dialog-handling API, not an inline `page.on('dialog')` listener.** Registering a listener inside the same `evaluate`-style code block as the triggering click raced against Playwright MCP's own dialog watcher — the confirm sometimes appeared to be "already handled" with unclear state. Switching to the dedicated dialog tool (accept/dismiss as a separate, explicit step) resolved it. **Generalizable principle: browser automation tools that expose a first-class API for a browser feature (dialogs, downloads, permissions) should be driven through that API, not replicated via a generic script-injection escape hatch — the two can conflict over who owns the event.**
+
+**Re-running an eval to confirm a fix can surface a *different* problem than the one you were checking.** The eval re-run (to confirm the Phase 15 few-shot fix) instead hit the 30-second client timeout on the two previously-failing cases — meaning the fix's actual effect on tool routing is still unverified, but the *eval harness's* honest-error-reporting fix from Phase 15 proved itself immediately, correctly showing `ERROR: timed out` instead of a false pass. The likely cause: cold-start latency on the first `search_docs` call after each server reload (the sentence-transformers embedding model reloads from disk), not the prompt content itself. **Generalizable principle: don't assume a re-run that "still fails" is the same failure as before — re-read the actual error, because the fix you're testing can succeed while an unrelated adjacent problem (here, a timeout budget that was already too tight for a Sonnet + RAG round-trip) is what shows up instead.**
+
+### Before vs After
+| | Before | After |
+|---|---|---|
+| Balance top-up tracking | `remaining = starting_balance − lifetime spend` (blends old + new) | `remaining = starting_balance − spend since last reset` (period-scoped, opt-in) |
+| Reset safety | N/A | Confirm dialog naming exactly what gets overwritten, before any reset |
+| Previous-period visibility | N/A | Single archived snapshot (cost, days, end date) shown in the banner |
+| Burn rate right after a reset | N/A | Falls back to previous period's rate, marked `(est.)`, until new data lands |
+| Eval verification of Phase 15 fix | N/A | Inconclusive — surfaced a timeout issue instead; genuine re-verification still pending |
+
+---
+
 ## Final Architecture
 
 ```

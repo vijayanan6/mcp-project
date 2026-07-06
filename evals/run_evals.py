@@ -46,6 +46,7 @@ def run_case(client: httpx.Client, case: dict, base_url: str, verbose: bool) -> 
     except Exception as e:
         return {
             "id": case["id"],
+            "description": case["description"],
             "passed": False,
             "error": str(e),
             "latency": round(time.time() - start, 2),
@@ -122,9 +123,14 @@ def main():
             results.append(result)
 
             status = f"{GREEN}PASS{RESET}" if result["passed"] else f"{RED}FAIL{RESET}"
-            tool_icon  = "OK" if result.get("tool_pass", True) else "XX"
-            model_icon = "OK" if result.get("model_pass", True) else "XX"
-            notes = f"  <- {result['notes']}" if result.get("notes") else ""
+            if "error" in result:
+                tool_icon = "??"
+                model_icon = "??"
+                notes = f"  <- ERROR: {result['error']}"
+            else:
+                tool_icon  = "OK" if result.get("tool_pass", True) else "XX"
+                model_icon = "OK" if result.get("model_pass", True) else "XX"
+                notes = f"  <- {result['notes']}" if result.get("notes") else ""
 
             print(
                 f"{result['id']:<15} "

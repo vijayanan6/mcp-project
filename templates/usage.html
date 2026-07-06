@@ -133,8 +133,13 @@
         <input type="number" id="credit-input" placeholder="e.g. 5.00" step="0.01" min="0" />
         <label style="margin-left:8px">Alert below:</label>
         <input type="number" id="alert-input" placeholder="e.g. 1.00" step="0.10" min="0" style="width:90px" />
+        <label style="margin-left:8px;display:flex;align-items:center;gap:5px;cursor:pointer" title="Start fresh spend tracking from now. Historical charts and tables are never deleted — only the remaining/burn-rate math above resets.">
+          <input type="checkbox" id="credit-reset" style="width:auto" />
+          Reset spend tracking (start fresh from now)
+        </label>
         <button onclick="saveCredit()">Save</button>
       </div>
+      <div id="prev-period-note" style="display:none;margin-top:8px;font-size:0.75rem;color:#64748b"></div>
     </div>
     <div class="credit-info" id="credit-info" style="display:none">
       <div class="credit-stat">
@@ -283,10 +288,17 @@
   function fmtDate(s) { return s ? s.slice(0,10) : '—'; }
 
   async function saveCredit() {
-    const bal = parseFloat(document.getElementById('credit-input').value);
-    const thr = parseFloat(document.getElementById('alert-input').value) || 1.0;
+    const bal   = parseFloat(document.getElementById('credit-input').value);
+    const thr   = parseFloat(document.getElementById('alert-input').value) || 1.0;
+    const reset = document.getElementById('credit-reset').checked;
     if (isNaN(bal) || bal <= 0) { alert('Enter a valid starting balance.'); return; }
-    await fetch('/usage/credit', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({starting_balance: bal, alert_threshold: thr}) });
+    if (reset && !confirm(
+      'Reset spend tracking? This archives the current period into the single ' +
+      '"previous period" slot, replacing whatever was there before. ' +
+      'Historical charts and tables are not affected — only this one snapshot.'
+    )) return;
+    await fetch('/usage/credit', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({starting_balance: bal, alert_threshold: thr, reset}) });
+    document.getElementById('credit-reset').checked = false;
     load();
   }
 
@@ -327,12 +339,25 @@
           </tr>`;
         }).join('');
 
-    // Credit banner
+    // Credit banner — spend/days are scoped to the current tracking period
+    // (since last reset, or all-time if never reset). See credit_status() in database.py.
     const startBal  = credit.starting_balance || 0;
     const alertThr  = credit.alert_threshold  || 1.0;
-    const spent     = t.total_cost_usd || 0;
+    const spent     = credit.period_cost_usd || 0;
     const remaining = Math.max(startBal - spent, 0);
     const usedPct   = startBal > 0 ? Math.min((spent / startBal) * 100, 100) : 0;
+
+    // Previous period snapshot (only present after at least one reset)
+    const prevNote = document.getElementById('prev-period-note');
+    if (credit.prev_period_end) {
+      const prevPerDay = credit.prev_period_days > 0 ? credit.prev_period_cost_usd / credit.prev_period_days : 0;
+      prevNote.style.display = 'block';
+      prevNote.textContent = `Previous period: ${fmtCost(credit.prev_period_cost_usd)} over ${credit.prev_period_days} day(s)`
+        + (prevPerDay > 0 ? ` (${fmtCost(prevPerDay)}/day)` : '')
+        + ` — reset ${fmtDate(credit.prev_period_end)}`;
+    } else {
+      prevNote.style.display = 'none';
+    }
 
     if (startBal > 0) {
       document.getElementById('credit-input').value  = startBal.toFixed(2);
@@ -352,23 +377,36 @@
       remEl.textContent = '$' + remaining.toFixed(4);
       remEl.className   = 'cs-value ' + (remaining <= alertThr ? 'red' : remaining <= alertThr*2 ? 'yellow' : 'green');
 
-      // Burn rate from daily data
-      const days = byDay.length || 1;
-      const totalDays = Math.max(days, 1);
-      const burnPerDay = spent / totalDays;
-      document.getElementById('ci-burnrate').textContent = fmtCost(burnPerDay) + '/day';
+      // Burn rate — use active days within the current tracking period, not the
+      // capped 14-row daily chart (byDay.length maxes at 14 regardless of true history).
+      // A fresh period (just reset, no usage yet) has 0 active days — fall back to the
+      // previous period's rate as an estimate rather than showing a hard "$0.00/day".
+      let burnPerDay  = credit.period_active_days > 0 ? spent / credit.period_active_days : 0;
+      let isEstimate  = false;
+      if (burnPerDay === 0 && credit.prev_period_days > 0) {
+        burnPerDay = credit.prev_period_cost_usd / credit.prev_period_days;
+        isEstimate = true;
+      }
+      document.getElementById('ci-burnrate').textContent = fmtCost(burnPerDay) + '/day' + (isEstimate ? ' (est.)' : '');
 
       // Forecast
+      const forecastLabel = document.querySelector('#forecast-section span');
       if (burnPerDay > 0) {
         document.getElementById('forecast-section').style.display = 'block';
         document.getElementById('forecast-30').textContent = '$' + (burnPerDay * 30).toFixed(2);
         document.getElementById('forecast-60').textContent = '$' + (burnPerDay * 60).toFixed(2);
         document.getElementById('forecast-90').textContent = '$' + (burnPerDay * 90).toFixed(2);
+        if (forecastLabel) forecastLabel.textContent = isEstimate
+          ? 'based on previous period’s burn rate — no usage yet in the current period'
+          : 'based on current burn rate';
+      } else {
+        document.getElementById('forecast-section').style.display = 'none';
       }
 
       const daysLeft = burnPerDay > 0 ? Math.floor(remaining / burnPerDay) : '∞';
       const dlEl = document.getElementById('ci-daysleft');
-      dlEl.textContent = daysLeft;
+      dlEl.textContent = daysLeft + (isEstimate && daysLeft !== '∞' ? '*' : '');
+      dlEl.title        = isEstimate ? 'Estimated from the previous period’s burn rate — no usage yet in the current period' : '';
       dlEl.className   = 'cs-value ' + (typeof daysLeft === 'number' && daysLeft < 7 ? 'red' : typeof daysLeft === 'number' && daysLeft < 14 ? 'yellow' : 'green');
 
       // Banner alert styling

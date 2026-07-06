@@ -76,6 +76,19 @@ def init_db() -> None:
                 updated_at          TEXT NOT NULL
             )
         """)
+        # migrate existing databases that predate the reset-period columns
+        for col, definition in [
+            ("period_start",          "TEXT"),
+            ("prev_period_start",     "TEXT"),
+            ("prev_period_end",       "TEXT"),
+            ("prev_period_cost_usd",  "REAL NOT NULL DEFAULT 0"),
+            ("prev_period_days",      "INTEGER NOT NULL DEFAULT 0"),
+        ]:
+            try:
+                conn.execute(f"ALTER TABLE credit_config ADD COLUMN {col} {definition}")
+                conn.commit()
+            except Exception:
+                pass
         conn.commit()
 
 
@@ -205,18 +218,73 @@ def credit_get() -> dict:
     """Return stored credit config or defaults."""
     with get_connection() as conn:
         row = conn.execute("SELECT * FROM credit_config WHERE id = 1").fetchone()
-        return dict(row) if row else {"starting_balance": 0.0, "alert_threshold": 1.0}
+        if row:
+            return dict(row)
+        return {
+            "starting_balance": 0.0, "alert_threshold": 1.0, "period_start": None,
+            "prev_period_start": None, "prev_period_end": None,
+            "prev_period_cost_usd": 0.0, "prev_period_days": 0,
+        }
 
 
-def credit_set(starting_balance: float, alert_threshold: float = 1.0) -> None:
-    """Save or update the starting credit balance and alert threshold."""
+def _period_spend(conn, period_start: str | None, project: str | None) -> tuple[float, int]:
+    """Sum cost and count distinct active days in usage_logs, optionally since period_start / for one project."""
+    where_parts, params = [], []
+    if period_start:
+        where_parts.append("created_at >= ?")
+        params.append(period_start)
+    if project:
+        where_parts.append("project = ?")
+        params.append(project)
+    where = ("WHERE " + " AND ".join(where_parts)) if where_parts else ""
+    row = conn.execute(f"""
+        SELECT SUM(estimated_cost_usd) AS cost_usd, COUNT(DISTINCT DATE(created_at)) AS active_days
+        FROM usage_logs {where}
+    """, params).fetchone()
+    return (row["cost_usd"] or 0.0), (row["active_days"] or 0)
+
+
+def credit_status(project: str | None = None) -> dict:
+    """Credit config plus spend/active-days for the *current* tracking period (since last reset, or all-time if never reset)."""
+    cfg = credit_get()
+    with get_connection() as conn:
+        cost_usd, active_days = _period_spend(conn, cfg.get("period_start"), project)
+    cfg["period_cost_usd"] = cost_usd
+    cfg["period_active_days"] = active_days
+    return cfg
+
+
+def credit_set(starting_balance: float, alert_threshold: float = 1.0, reset: bool = False) -> None:
+    """Save or update the starting credit balance and alert threshold.
+
+    If reset=True, snapshot the outgoing period's spend/days into prev_period_* columns
+    (global, not project-scoped — a real balance top-up applies to the whole account) and
+    start a new period from now. Never touches usage_logs — historical charts are unaffected.
+    """
     now = datetime.now().isoformat()
     with get_connection() as conn:
-        conn.execute("""
-            INSERT INTO credit_config (id, starting_balance, alert_threshold, updated_at)
-            VALUES (1, ?, ?, ?)
-            ON CONFLICT(id) DO UPDATE SET starting_balance = ?, alert_threshold = ?, updated_at = ?
-        """, (starting_balance, alert_threshold, now, starting_balance, alert_threshold, now))
+        if reset:
+            old_row = conn.execute("SELECT period_start FROM credit_config WHERE id = 1").fetchone()
+            old_period_start = old_row["period_start"] if old_row else None
+            prev_cost, prev_days = _period_spend(conn, old_period_start, project=None)
+            conn.execute("""
+                INSERT INTO credit_config
+                  (id, starting_balance, alert_threshold, period_start,
+                   prev_period_start, prev_period_end, prev_period_cost_usd, prev_period_days, updated_at)
+                VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    starting_balance = ?, alert_threshold = ?, period_start = ?,
+                    prev_period_start = ?, prev_period_end = ?, prev_period_cost_usd = ?, prev_period_days = ?, updated_at = ?
+            """, (
+                starting_balance, alert_threshold, now, old_period_start, now, prev_cost, prev_days, now,
+                starting_balance, alert_threshold, now, old_period_start, now, prev_cost, prev_days, now,
+            ))
+        else:
+            conn.execute("""
+                INSERT INTO credit_config (id, starting_balance, alert_threshold, updated_at)
+                VALUES (1, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET starting_balance = ?, alert_threshold = ?, updated_at = ?
+            """, (starting_balance, alert_threshold, now, starting_balance, alert_threshold, now))
         conn.commit()
 
 
