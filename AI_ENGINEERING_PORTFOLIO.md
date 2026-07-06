@@ -68,6 +68,7 @@ User question → embed → ChromaDB similarity search → top 4 chunks → Clau
 - Local embedding model: `all-MiniLM-L6-v2` via `sentence-transformers`
 - Auto-indexes on server startup; re-index by chat command
 - Supports `.txt`, `.md`, `.csv`, scanned PDFs (via OCR)
+- Verified — not assumed — the actual ranking mechanism: confirmed the installed ChromaDB defaults to cosine distance for this embedding function, then proved it empirically with the project's own model — two paraphrased sentences sharing zero words scored 0.556 similarity vs. 0.09 for an unrelated pair
 
 ---
 
@@ -152,6 +153,9 @@ Multi-turn sessions stored in SQLite. Full history saved to DB; only the last 10
 - Diagnosed a silent auth failure caused by a UTF-8 byte-order-mark in `.env` — root-caused via structural checks (`grep -c "^ANTHROPIC_API_KEY="`) rather than ever printing the key itself
 - Evaluated a third-party MCP server (Playwright, Microsoft's official package) before installing — checked publisher trust, exact access boundary (browser automation only, no filesystem/shell reach), and where prompt-injection risk actually lives (untrusted external content, not applicable when testing `localhost`)
 - Standing discipline: after every new file, dependency, or MCP server, check `git status` for untracked artifacts and confirm `.gitignore` covers them before considering a change complete — caught a real gap where Playwright's screenshot/snapshot output wasn't ignored and could have leaked session data into the public repo
+- **Indirect prompt injection defense** — identified that `search_docs`/`read_doc` results flow back into Claude's context as `tool_result` blocks, indistinguishable from real instructions unless told otherwise (OWASP's #1 LLM risk, and the standard failure mode for RAG pipelines specifically). Added a `<security>` tag to `SYSTEM_PROMPT` explicitly instructing Claude to treat retrieved document/note content as data, never as commands — verified via the eval suite that the change didn't alter tool-routing behavior
+- **Input sanitization** — `_sanitize_input()` strips control/non-printable characters and caps message length before any user input reaches history or the model, closing off context-window abuse as a separate, cheaper first layer
+- **Caught a stale technique before it shipped** — a planned "response prefilling" approach for structured JSON output turned out to return a hard 400 on this project's own routed model (`claude-sonnet-4-6`); verified live via the Models API that both routed models support `output_config.format` / `client.messages.parse()` instead, and used that as the correct forward path for structured outputs
 
 ---
 
