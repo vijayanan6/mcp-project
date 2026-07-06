@@ -53,8 +53,10 @@ logs/
 .playwright-mcp/
 dashboard-test.png
 
-# Claude Code internal files
-.claude/
+# Claude Code internal files (local config/cache) — but track published skills
+.claude/*
+!.claude/skills/
+!.claude/skills/**
 
 # Testing (pytest — Phase pre-Docker)
 .pytest_cache/
