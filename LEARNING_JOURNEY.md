@@ -837,6 +837,8 @@ Added a "reset spend tracking" option to the cost dashboard's credit banner, so 
 
 **Re-running an eval to confirm a fix can surface a *different* problem than the one you were checking.** The eval re-run (to confirm the Phase 15 few-shot fix) instead hit the 30-second client timeout on the two previously-failing cases — meaning the fix's actual effect on tool routing is still unverified, but the *eval harness's* honest-error-reporting fix from Phase 15 proved itself immediately, correctly showing `ERROR: timed out` instead of a false pass. The likely cause: cold-start latency on the first `search_docs` call after each server reload (the sentence-transformers embedding model reloads from disk), not the prompt content itself. **Generalizable principle: don't assume a re-run that "still fails" is the same failure as before — re-read the actual error, because the fix you're testing can succeed while an unrelated adjacent problem (here, a timeout budget that was already too tight for a Sonnet + RAG round-trip) is what shows up instead.**
 
+**A correct calculation with a misleading label is still a bug.** "Days Left" computed exactly what it was supposed to (`remaining ÷ burn rate`) — the math was never wrong. But the *label* implied something false: that API credits expire on a day count, which they don't. Anthropic credits don't have a calendar-based cutoff; the number is a runway forecast, not a limit. **Generalizable principle: a metric's name is part of its correctness.** A perfectly accurate number attached to a name that implies the wrong kind of guarantee is a UX bug, not a nitpick — fixed here by renaming to "Est. Runway," formatting the value as `~Nd` instead of a bare integer, and adding a tooltip on both the label and the value stating explicitly that it's a forecast, not an expiration.
+
 ### Before vs After
 | | Before | After |
 |---|---|---|
@@ -845,6 +847,7 @@ Added a "reset spend tracking" option to the cost dashboard's credit banner, so 
 | Previous-period visibility | N/A | Single archived snapshot (cost, days, end date) shown in the banner |
 | Burn rate right after a reset | N/A | Falls back to previous period's rate, marked `(est.)`, until new data lands |
 | Eval verification of Phase 15 fix | N/A | Inconclusive — surfaced a timeout issue instead; genuine re-verification still pending |
+| "Days Left" label | Bare integer, implied a hard expiration | "Est. Runway", `~Nd` format, tooltip on label + value clarifying it's a forecast |
 
 ---
 

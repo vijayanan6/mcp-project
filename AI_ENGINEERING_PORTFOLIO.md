@@ -170,21 +170,36 @@ Built a full observability layer for LLM API spend — the same class of tooling
 ```
 Starting balance: $5.00 | Alert threshold: $1.00
 ───────────────────────────────────────
-Remaining: $4.72   Burn rate: $0.14/day   Days left: 33
+Remaining: $4.72   Burn rate: $0.14/day   Est. Runway: ~33d
 Progress:  ████████░░░░░░░░░░░░  5.6% used
 ```
 
-- `POST /usage/credit` — saves balance + alert threshold to `credit_config` SQLite table (singleton row, upserted)
+- `POST /usage/credit` — saves balance + alert threshold to `credit_config` SQLite table (singleton row, upserted); optional `reset: true` starts a fresh spend-tracking period (see below)
 - Progress bar changes colour: green → yellow (< 2× threshold) → red (below threshold)
 - **Low-credit alert badge** in the chat UI header pulses red when remaining balance falls below the threshold — checked every 60 seconds live
+- **"Est. Runway" is a forecast, not a limit** — labeled explicitly (with a tooltip) as `remaining ÷ burn rate`, not an actual credit expiration, after the plain "Days Left" label was found to imply a hard, calendar-based cutoff that doesn't exist for API credits
+
+**Non-destructive spend-period reset (for real balance top-ups):**
+
+A real Anthropic account top-up shouldn't blend with lifetime spend when computing what's "remaining." A confirm-gated checkbox in the credit banner sets `reset: true`, which:
+- Starts a new tracking period (`credit_config.period_start`) — remaining/burn-rate/forecast recalculate from that point forward
+- Archives the outgoing period's cost + active-days into a single `prev_period_*` snapshot, shown in the banner
+- Never touches `usage_logs` — every historical chart and table always reflects full lifetime data regardless of resets
+
+```python
+# database.py
+def credit_status(project=None) -> dict:
+    """Credit config + spend/active-days scoped to the current period
+    (since last reset, or all-time if the feature has never been used)."""
+```
 
 **Endpoints:**
 | Route | Purpose |
 |-------|---------|
 | `GET /usage` | Visual HTML dashboard |
-| `GET /usage/data` | JSON: totals, by_model, by_day, by_session, by_tool, by_project, credit config |
+| `GET /usage/data` | JSON: totals, by_model, by_day, by_session, by_tool, by_project, period-scoped credit status |
 | `GET /usage/data?project=name` | Same but filtered to one project |
-| `POST /usage/credit` | Save starting balance and alert threshold |
+| `POST /usage/credit` | Save starting balance and alert threshold; `reset: true` archives the current period and starts fresh |
 
 **Multi-project support (Option C — multi-tenancy at the data layer):**
 

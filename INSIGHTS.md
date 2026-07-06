@@ -217,6 +217,14 @@ The lesson isn't about this one bug — it's about the habit: when a re-run to v
 
 ---
 
+## 21. A Metric's Name Is Part of Its Correctness
+
+The cost dashboard's "Days Left" stat computed exactly the right number — remaining balance divided by burn rate. The math was never the bug. The label was: it implied Anthropic API credits expire on a day count, which they don't. A user glancing at "Days Left: 33" reasonably reads that as a countdown to something running out on a schedule, not as a rough forecast that assumes today's spend rate holds steady.
+
+A correct calculation attached to a misleading name is still a bug — just one that lives in the UI layer instead of the logic layer. The fix here didn't touch the math at all: renaming to "Est. Runway," formatting the value as `~33d` instead of a bare `33`, and adding a tooltip that says outright "not an actual credit expiration." Any time a number could be mistaken for a guarantee it isn't, that's worth fixing with the same seriousness as a wrong calculation — the person reading the dashboard can't tell the difference between "this number is wrong" and "this number is right but means something other than what it looks like it means."
+
+---
+
 ## The Core Takeaway
 
 You started wanting to understand MCP.

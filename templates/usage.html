@@ -155,7 +155,7 @@
         <span class="cs-value yellow" id="ci-burnrate">—</span>
       </div>
       <div class="credit-stat">
-        <span class="cs-label">Days Left</span>
+        <span class="cs-label" title="A forecast, not an actual expiration — API credits don't expire on a day count. This is when your balance would run out if you kept spending at the current burn rate.">Est. Runway</span>
         <span class="cs-value green" id="ci-daysleft">—</span>
       </div>
     </div>
@@ -403,10 +403,14 @@
         document.getElementById('forecast-section').style.display = 'none';
       }
 
+      // "Runway" — a burn-rate forecast, not an actual credit expiration (API credits
+      // don't expire on a day count). '∞' means no measurable burn rate yet.
       const daysLeft = burnPerDay > 0 ? Math.floor(remaining / burnPerDay) : '∞';
       const dlEl = document.getElementById('ci-daysleft');
-      dlEl.textContent = daysLeft + (isEstimate && daysLeft !== '∞' ? '*' : '');
-      dlEl.title        = isEstimate ? 'Estimated from the previous period’s burn rate — no usage yet in the current period' : '';
+      dlEl.textContent = daysLeft === '∞' ? '∞' : `~${daysLeft}d` + (isEstimate ? '*' : '');
+      dlEl.title = isEstimate
+        ? 'Estimated from the previous period’s burn rate (no usage yet in the current period). Forecast only — not an actual credit expiration.'
+        : 'Forecast based on current burn rate — not an actual credit expiration.';
       dlEl.className   = 'cs-value ' + (typeof daysLeft === 'number' && daysLeft < 7 ? 'red' : typeof daysLeft === 'number' && daysLeft < 14 ? 'yellow' : 'green');
 
       // Banner alert styling
