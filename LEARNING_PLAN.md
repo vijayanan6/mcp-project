@@ -3,7 +3,7 @@
 Personal learning roadmap based on the MCP Learning Project foundation.
 Track progress by checking off items as completed.
 
-Last updated: June 2026
+Last updated: July 2026
 
 ---
 
@@ -27,6 +27,8 @@ Last updated: June 2026
 - [x] Evaluating third-party MCP servers before install — publisher trust, access boundary, prompt-injection risk surface, project vs user scope
 - [x] Playwright MCP — browser automation for UI testing, wired into Claude Code at project scope
 - [x] Tool use fundamentals — `tool_choice` modes, forced tool calls, streaming tool_use blocks (beneath `tool_runner`)
+- [x] Anthropic-native tools beyond MCP — server-side (`web_search`, no local execution) vs. client-side (`BetaAsyncBuiltinFunctionTool`, local execution) vs. MCP; found and fixed a real multi-model tool-capability bug in production
+- [x] Multi-channel alerting with stateful cooldowns — Discord webhook alerts, tested at the state *transitions* (not just each state), designed around actual runtime guarantees instead of the textbook scheduler pattern
 
 ### Not Yet Started ❌
 - [ ] MCP Inspector — visual debugger for MCP servers (test tools without a full client)
@@ -70,6 +72,17 @@ Last updated: June 2026
 - [x] Manually construct one multi-turn tool loop without `tool_runner` — build the follow-up request with a `tool_result` block yourself, to see exactly what the SDK automates (`tool_use_demo.py` §5 — save-then-read note loop, verified the SQLite write with `inspect_db.py`)
 
 **Result: all 6 items demoed hands-on in `tool_use_demo.py` — can explain what `tool_runner` does under the hood, and can force Claude to call a specific tool via `tool_choice` instead of relying on prompt wording alone**
+
+---
+
+### Anthropic-Native Tools — Server-Side & Client-Side, Beyond MCP ✅
+- [x] Understand the 3 tool execution models sharing one `tools` array: MCP (your own subprocess), server-side (Anthropic executes entirely — `web_search`), client-side builtin (`BetaAsyncBuiltinFunctionTool` — Claude requests, your process executes)
+- [x] Implement a server-side tool — `web_search`, declared as a plain dict, no local handler needed
+- [x] Implement a client-side builtin tool — `text_editor_tool.py`'s `ProjectNotesEditorTool`, implementing `to_dict()` + `call()`, hard-confined to editing exactly one file with path-equality checks (not just prefix/`is_relative_to` checks against a folder)
+- [x] Recognize that server-side tool calls arrive as `server_tool_use` content blocks, a different type than `tool_use` — code that only pattern-matches one type silently drops the other
+- [x] Recognize that declaring a tool is a capability commitment to *every* model a router can select, not just the one that ends up calling it — `web_search`'s default config broke every Haiku-routed request in this project, regardless of whether that request needed search
+
+**Result: real production bug found and fixed (multi-model tool-capability mismatch), plus a cost-tracking gap (server_tool_use vs tool_use) — both documented in `INSIGHTS.md` #26–27 and `LEARNING_JOURNEY.md` Phase 19**
 
 ---
 
@@ -154,6 +167,7 @@ Last updated: June 2026
 - [x] Track tool calls per request — stored as JSON array in usage_logs
 - [x] Build visual cost dashboard — daily chart, model split, per-session, per-tool
 - [x] Credit tracker — starting balance, burn rate, days remaining, alert badge
+- [x] Multi-channel/multi-tier alerting — Discord webhook push (mobile-reachable, unlike the passive in-browser badge): 2-tier low-balance, spend-spike anomaly detection (today vs. trailing 7-day average), per-tool budget cap, daily digest. Each independently cooldown-gated; found and fixed a real state-transition bug (stale cooldown when jumping tiers) by testing transitions, not just states.
 - [ ] Add structured logging to `api.py` using Python's `logging` module (not `print`)
 - [ ] Log every error with full traceback to a log file
 - [ ] Understand DEBUG / INFO / WARNING / ERROR / CRITICAL log levels
