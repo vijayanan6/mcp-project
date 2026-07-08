@@ -15,14 +15,17 @@ Run:
   Then open http://localhost:8000
 """
 import json
+import os
 import sys
 import uuid
 from contextlib import asynccontextmanager
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from dotenv import load_dotenv
 load_dotenv()
 
+import httpx
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse, StreamingResponse
 from pydantic import BaseModel
@@ -31,8 +34,20 @@ from anthropic import AsyncAnthropic
 from anthropic.lib.tools.mcp import async_mcp_tool
 from mcp import ClientSession
 from mcp.client.stdio import StdioServerParameters, stdio_client
-from database import init_db, session_get, session_save, session_list, session_delete, usage_log, usage_summary, credit_status, credit_set
+from database import (
+    init_db, session_get, session_save, session_list, session_delete,
+    usage_log, usage_summary, credit_status, credit_set,
+    mark_alert_sent, clear_alert_cooldown, mark_warning_sent, clear_warning_cooldown,
+    mark_spike_alert_sent, mark_digest_sent, mark_web_search_budget_alert_sent,
+    total_cost_for_date, web_search_cost_for_date, trailing_daily_average, daily_digest,
+)
 from text_editor_tool import ProjectNotesEditorTool
+
+DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL")
+ALERT_COOLDOWN = timedelta(hours=24)          # low-balance tiers: min gap between repeat alerts
+WEB_SEARCH_DAILY_BUDGET = 1.00                 # per-tool budget alert threshold
+SPIKE_MULTIPLIER = 3.0                         # today's spend vs trailing average
+SPIKE_MIN_ABSOLUTE = 1.00                      # floor so a near-zero average can't trigger noise
 
 SERVER_SCRIPT = str(Path(__file__).parent / "mcp_server.py")
 
@@ -168,13 +183,14 @@ class CreditRequest(BaseModel):
     starting_balance: float
     alert_threshold: float = 1.0
     reset: bool = False
+    warning_threshold: float | None = None  # None = leave unchanged (not yet exposed in the UI)
 
 @app.post("/usage/credit")
 async def save_credit(req: CreditRequest):
     """Save the user's starting Anthropic credit balance. reset=True starts a fresh
     spend-tracking period from now, archiving the outgoing period's totals — never
     deletes usage_logs, so historical charts are unaffected."""
-    credit_set(req.starting_balance, req.alert_threshold, reset=req.reset)
+    credit_set(req.starting_balance, req.alert_threshold, reset=req.reset, warning_threshold=req.warning_threshold)
     return {"saved": True, "starting_balance": req.starting_balance, "reset": req.reset}
 
 
@@ -264,6 +280,172 @@ def _pick_model(message: str) -> str:
     return "claude-haiku-4-5"
 
 
+async def _send_discord(message: str) -> bool:
+    """POST a message to the Discord webhook. Never raises — a failed alert
+    must never break the user's actual chat response."""
+    try:
+        async with httpx.AsyncClient(verify=False, timeout=10) as client:
+            resp = await client.post(DISCORD_WEBHOOK_URL, json={"content": message})
+            resp.raise_for_status()
+        return True
+    except Exception as e:
+        print(f"[alert] Discord webhook failed: {e}")
+        return False
+
+
+async def _maybe_send_low_credit_alert() -> None:
+    """Push a two-tier Discord alert as remaining balance drops: warning_threshold
+    (default $5) then alert_threshold (default $1, the "critical" tier).
+
+    Mirrors the exact "remaining" formula the dashboard banner uses (usage.html):
+    remaining = max(starting_balance - period_cost_usd, 0). Each tier has its own
+    cooldown so it won't spam Discord on every message while balance stays low;
+    each cooldown clears as soon as balance recovers back above that tier's
+    threshold, so the *next* drop alerts immediately instead of waiting out a
+    stale window. Critical takes priority — if already in the critical zone,
+    the warning tier is skipped (would be a redundant, less-urgent duplicate).
+    """
+    cfg = credit_status()
+    starting_balance = cfg.get("starting_balance") or 0
+    if starting_balance <= 0:
+        return  # no balance configured — nothing to alert on (matches dashboard gating)
+
+    alert_threshold = cfg.get("alert_threshold") or 1.0
+    warning_threshold = cfg.get("warning_threshold") or 5.0
+    remaining = max(starting_balance - (cfg.get("period_cost_usd") or 0), 0)
+
+    if remaining <= alert_threshold:
+        # Dropping into critical supersedes any prior warning — clear its cooldown so
+        # a later partial recovery back into the warning band re-alerts immediately
+        # instead of appearing to still be in an old warning cooldown window.
+        if cfg.get("last_warning_sent_at"):
+            clear_warning_cooldown()
+        last_sent = cfg.get("last_alert_sent_at")
+        if last_sent and (datetime.now() - datetime.fromisoformat(last_sent)) < ALERT_COOLDOWN:
+            return
+        message = (
+            f"🔴 **MCP Project — CRITICAL low credit**\n"
+            f"Remaining: **${remaining:.2f}** (critical threshold: ${alert_threshold:.2f})\n"
+            f"Starting balance: ${starting_balance:.2f}"
+        )
+        if await _send_discord(message):
+            mark_alert_sent()
+        return
+
+    # Above critical — clear a stale critical cooldown so the next drop alerts immediately
+    if cfg.get("last_alert_sent_at"):
+        clear_alert_cooldown()
+
+    if remaining <= warning_threshold:
+        last_warned = cfg.get("last_warning_sent_at")
+        if last_warned and (datetime.now() - datetime.fromisoformat(last_warned)) < ALERT_COOLDOWN:
+            return
+        message = (
+            f"🟡 **MCP Project — low credit warning**\n"
+            f"Remaining: **${remaining:.2f}** (warning threshold: ${warning_threshold:.2f})\n"
+            f"Starting balance: ${starting_balance:.2f}"
+        )
+        if await _send_discord(message):
+            mark_warning_sent()
+        return
+
+    # Above warning too — full recovery, clear a stale warning cooldown
+    if cfg.get("last_warning_sent_at"):
+        clear_warning_cooldown()
+
+
+async def _maybe_send_spend_spike_alert() -> None:
+    """Push a Discord alert when today's spend is unusually high vs. the trailing
+    7-day daily average — catches a runaway loop or bug *causing* spend, rather
+    than only the low balance that results from it. Capped at once per day.
+    A minimum absolute floor (SPIKE_MIN_ABSOLUTE) avoids false positives when
+    the trailing average is near-zero, where any small spend looks infinite.
+    """
+    today_str = date.today().isoformat()
+    cfg = credit_status()
+    if cfg.get("last_spike_alert_date") == today_str:
+        return  # already alerted today
+
+    today_cost = total_cost_for_date(today_str)
+    if today_cost < SPIKE_MIN_ABSOLUTE:
+        return
+
+    avg = trailing_daily_average(today_str, days=7)
+    if avg <= 0 or today_cost < avg * SPIKE_MULTIPLIER:
+        return
+
+    message = (
+        f"📈 **MCP Project — spend spike detected**\n"
+        f"Today so far: **${today_cost:.2f}** vs. 7-day average **${avg:.2f}**/day "
+        f"({today_cost / avg:.1f}x)\n"
+        f"Worth checking for a runaway loop or unexpected tool usage."
+    )
+    if await _send_discord(message):
+        mark_spike_alert_sent(today_str)
+
+
+async def _maybe_send_daily_digest() -> None:
+    """Send a recap of yesterday's usage on the first request of each new day.
+    No background scheduler — this app isn't guaranteed to be running at any
+    fixed wall-clock time, so the digest piggybacks on real traffic instead.
+    """
+    today_str = date.today().isoformat()
+    cfg = credit_status()
+    if cfg.get("last_digest_sent_date") == today_str:
+        return  # already sent today
+
+    yesterday_str = (date.today() - timedelta(days=1)).isoformat()
+    d = daily_digest(yesterday_str)
+    top_tools = ", ".join(f"{t['tool_name']} ({t['calls']})" for t in d["top_tools"]) or "none"
+    message = (
+        f"📋 **MCP Project — daily digest** ({yesterday_str})\n"
+        f"Spend: **${d['cost_usd']:.2f}** · Requests: {d['requests']} · "
+        f"Tokens: {d['input_tokens'] + d['output_tokens']:,}\n"
+        f"Top tools: {top_tools}"
+    )
+    if await _send_discord(message):
+        mark_digest_sent(today_str)
+
+
+async def _maybe_send_web_search_budget_alert() -> None:
+    """Push a Discord alert if web_search alone (the one tool with a real $/use
+    fee) exceeds WEB_SEARCH_DAILY_BUDGET today. Capped at once per day."""
+    today_str = date.today().isoformat()
+    cfg = credit_status()
+    if cfg.get("last_web_search_budget_alert_date") == today_str:
+        return  # already alerted today
+
+    cost = web_search_cost_for_date(today_str)
+    if cost < WEB_SEARCH_DAILY_BUDGET:
+        return
+
+    message = (
+        f"🔎 **MCP Project — web_search budget exceeded**\n"
+        f"web_search cost today: **${cost:.2f}** (budget: ${WEB_SEARCH_DAILY_BUDGET:.2f})\n"
+        f"At $0.01/search, that's {round(cost / 0.01)} searches so far today."
+    )
+    if await _send_discord(message):
+        mark_web_search_budget_alert_sent(today_str)
+
+
+async def _run_alert_checks() -> None:
+    """Run all Discord alert checks after a request logs usage. Each check is
+    isolated — one failing (e.g. a DB error) must not skip the others or ever
+    break the user's actual chat response."""
+    if not DISCORD_WEBHOOK_URL:
+        return
+    for check in (
+        _maybe_send_low_credit_alert,
+        _maybe_send_spend_spike_alert,
+        _maybe_send_daily_digest,
+        _maybe_send_web_search_budget_alert,
+    ):
+        try:
+            await check()
+        except Exception as e:
+            print(f"[alert] {check.__name__} failed: {e}")
+
+
 @app.post("/chat")
 async def chat(req: ChatRequest):
     """
@@ -322,6 +504,7 @@ async def chat(req: ChatRequest):
     # Persist token usage to SQLite for cost dashboard
     if has_usage:
         usage_log(session_id, model, total_input, total_cache_write, total_cache_read, total_output, tools=tools_used, project="mcp-project", web_search_requests=total_web_searches)
+        await _run_alert_checks()
 
     return {
         "session_id": session_id,
@@ -414,6 +597,7 @@ async def stream_chat(req: ChatRequest):
             # Persist token usage to SQLite for cost dashboard
             if has_usage:
                 usage_log(session_id, model, total_input, total_cache_write, total_cache_read, total_output, tools=tools_called, project="mcp-project", web_search_requests=total_web_searches)
+                await _run_alert_checks()
 
             done_data = {"type": "done", "session_id": session_id, "model": model}
             if has_usage:

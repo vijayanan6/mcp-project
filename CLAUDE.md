@@ -93,6 +93,28 @@ Features: credit balance tracker, burn rate ($/day), estimated runway (labeled "
 
 **web_search cost tracking:** `web_search` is billed at $10 per 1,000 searches ($0.01/use) on top of normal token costs — a flat server-side fee, not derivable from token counts. `usage_logs.web_search_requests` (read from `usage.server_tool_use.web_search_requests` on each turn) stores the raw count; `_estimate_cost()` in `database.py` folds `web_search_requests × $0.01` into `estimated_cost_usd`, so it flows automatically into every existing aggregate (by_model, by_day, by_session, by_tool, by_project, credit/burn-rate math) with no separate dashboard wiring. The "Web Searches" stat card on `/usage` surfaces the raw count.
 
+### Discord Mobile Alerts
+
+The in-dashboard badge only helps if the browser tab is open. `_run_alert_checks()` in `api.py` runs after every logged request (`/chat` and `/stream`) and pushes real-time alerts to a Discord webhook — Discord's mobile app turns these into phone push notifications, so alerts reach you without the dashboard open.
+
+**Config:** `DISCORD_WEBHOOK_URL` in `.env` (optional — every check silently no-ops if unset). No other secret involved; email was deliberately skipped as a channel — it needs a heavier credential (SMTP/app password) for a channel that isn't checked. The URL lives only in `.env` (gitignored), read via `os.environ`, never stored in SQLite or returned by any API endpoint.
+
+**Four alert types, each independently cooldown-gated so none of them can spam Discord:**
+
+| Alert | Trigger | Cooldown | Config |
+|---|---|---|---|
+| 🟡 Warning (low balance) | `remaining ≤ warning_threshold` (and above critical) | 24h, clears on recovery above `warning_threshold` | `credit_config.warning_threshold`, default $5 |
+| 🔴 Critical (low balance) | `remaining ≤ alert_threshold` | 24h, clears on recovery above `alert_threshold`; also clears a stale warning cooldown (critical supersedes warning) | `credit_config.alert_threshold`, default $1 — same field the dashboard badge already uses |
+| 📈 Spend spike | Today's spend ≥ `SPIKE_MIN_ABSOLUTE` ($1) **and** ≥ `SPIKE_MULTIPLIER` (3×) the trailing 7-day daily average | Once per calendar day | Constants in `api.py` — catches a runaway loop or bug *causing* spend, not just the low balance that results from it |
+| 🔎 web_search budget | `web_search`'s cost alone (exact, via `web_search_requests × $0.01`) exceeds `WEB_SEARCH_DAILY_BUDGET` ($1) for the day | Once per calendar day | Constant in `api.py` |
+| 📋 Daily digest | First request of a new calendar day | Once per calendar day | N/A — always fires with yesterday's spend/tokens/top-tools recap |
+
+**Why the digest fires on first-request-of-the-day, not a fixed time:** this app only runs when `uvicorn` is started — there's no guarantee it's running at any fixed wall-clock time, so a background scheduler (e.g. APScheduler firing at 8am) could silently miss days entirely. Piggybacking on real traffic means the digest always eventually fires, just possibly later than a fixed hour on light-usage days.
+
+**`warning_threshold` is stored but not yet in the dashboard UI** — change it via `POST /usage/credit` with `{"warning_threshold": N}` (omit the field entirely to leave it unchanged; the existing dashboard form doesn't send it, so it can't accidentally reset it).
+
+**Two-tier low-balance logic (`_maybe_send_low_credit_alert`) mirrors the exact "remaining" formula the dashboard banner uses** (`usage.html`): `remaining = max(starting_balance - period_cost_usd, 0)`. Critical is checked first — being in the critical zone skips the warning tier entirely (it would be a redundant, less-urgent duplicate).
+
 ### Resetting Spend Tracking (Balance Top-Ups)
 
 A real Anthropic account top-up doesn't mean past spend should keep counting against the new balance. The "Reset spend tracking" checkbox in the credit banner (with a confirm prompt, since it overwrites the single archived snapshot below) sets `reset: true` on `POST /usage/credit`, which:

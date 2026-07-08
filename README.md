@@ -151,6 +151,12 @@ badge that pulses in the chat header.
 `estimated_cost_usd` automatically, so it flows into every chart above with no special
 handling — see `CLAUDE.md` for how.
 
+**Mobile alerts:** set `DISCORD_WEBHOOK_URL` in `.env` to get real-time Discord push
+notifications (via Discord's mobile app) instead of only the passive in-browser badge —
+covers low-balance warnings (2 tiers), a spend-spike alert, a per-tool budget alert for
+`web_search`, and a daily usage digest. Fully optional; every check no-ops if unset. See
+`CLAUDE.md` § Discord Mobile Alerts for the full trigger/cooldown design.
+
 This dashboard tracks **Anthropic API usage only** — not your Claude Pro subscription (a separate,
 flat-fee product). See `CLAUDE.md` for the full feature list and multi-project setup instructions.
 

@@ -67,6 +67,7 @@ The entry point for the web application. Built with FastAPI.
 - Auto-indexes documents into ChromaDB on startup
 - Exposes endpoints: `/`, `/chat`, `/stream`, `/tools`, `/sessions`, `/usage`, `/usage/data`, `/usage/credit`
 - Routes each message to Haiku or Sonnet via `_pick_model()` based on complexity
+- Runs `_run_alert_checks()` after every logged request — pushes Discord mobile alerts (low-balance warning/critical, spend spike, web_search budget, daily digest) when `DISCORD_WEBHOOK_URL` is configured; see `CLAUDE.md` § Discord Mobile Alerts
 - Logs token usage and tool calls to SQLite after every response via `usage_log()`
 
 ### mcp_server.py — MCP Server
@@ -262,9 +263,12 @@ usage_logs table
   created_at          — timestamp
 
 credit_config table (singleton — always id=1)
-  starting_balance  — user's Anthropic API starting balance
-  alert_threshold   — balance level that triggers the red alert badge
-  updated_at        — last saved timestamp
+  starting_balance    — user's Anthropic API starting balance
+  alert_threshold     — remaining balance that triggers the red badge + Discord CRITICAL alert (default $1)
+  warning_threshold   — remaining balance that triggers the Discord warning alert (default $5, not yet in the dashboard UI)
+  last_alert_sent_at  / last_warning_sent_at    — cooldown timestamps for the two low-balance alert tiers
+  last_spike_alert_date / last_digest_sent_date / last_web_search_budget_alert_date — once-per-day cooldown dates for the other 3 Discord alert types
+  updated_at          — last saved timestamp
 ```
 
 ### ChromaDB (chroma_db/)

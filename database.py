@@ -78,13 +78,19 @@ def init_db() -> None:
                 updated_at          TEXT NOT NULL
             )
         """)
-        # migrate existing databases that predate the reset-period columns
+        # migrate existing databases that predate the reset-period / alert columns
         for col, definition in [
-            ("period_start",          "TEXT"),
-            ("prev_period_start",     "TEXT"),
-            ("prev_period_end",       "TEXT"),
-            ("prev_period_cost_usd",  "REAL NOT NULL DEFAULT 0"),
-            ("prev_period_days",      "INTEGER NOT NULL DEFAULT 0"),
+            ("period_start",                     "TEXT"),
+            ("prev_period_start",                "TEXT"),
+            ("prev_period_end",                  "TEXT"),
+            ("prev_period_cost_usd",             "REAL NOT NULL DEFAULT 0"),
+            ("prev_period_days",                 "INTEGER NOT NULL DEFAULT 0"),
+            ("last_alert_sent_at",                "TEXT"),  # critical low-balance cooldown
+            ("warning_threshold",                 "REAL NOT NULL DEFAULT 5.0"),
+            ("last_warning_sent_at",              "TEXT"),  # warning low-balance cooldown
+            ("last_spike_alert_date",             "TEXT"),  # date string, once/day
+            ("last_digest_sent_date",             "TEXT"),  # date string, once/day
+            ("last_web_search_budget_alert_date", "TEXT"),  # date string, once/day
         ]:
             try:
                 conn.execute(f"ALTER TABLE credit_config ADD COLUMN {col} {definition}")
@@ -262,8 +268,11 @@ def credit_status(project: str | None = None) -> dict:
     return cfg
 
 
-def credit_set(starting_balance: float, alert_threshold: float = 1.0, reset: bool = False) -> None:
-    """Save or update the starting credit balance and alert threshold.
+def credit_set(starting_balance: float, alert_threshold: float = 1.0, reset: bool = False, warning_threshold: float | None = None) -> None:
+    """Save or update the starting credit balance and alert thresholds.
+
+    warning_threshold defaults to None (leave unchanged / 5.0 on first-ever row) so
+    existing dashboard calls that don't know about it can't silently reset it.
 
     If reset=True, snapshot the outgoing period's spend/days into prev_period_* columns
     (global, not project-scoped — a real balance top-up applies to the whole account) and
@@ -277,23 +286,157 @@ def credit_set(starting_balance: float, alert_threshold: float = 1.0, reset: boo
             prev_cost, prev_days = _period_spend(conn, old_period_start, project=None)
             conn.execute("""
                 INSERT INTO credit_config
-                  (id, starting_balance, alert_threshold, period_start,
+                  (id, starting_balance, alert_threshold, warning_threshold, period_start,
                    prev_period_start, prev_period_end, prev_period_cost_usd, prev_period_days, updated_at)
-                VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (1, ?, ?, COALESCE(?, 5.0), ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET
-                    starting_balance = ?, alert_threshold = ?, period_start = ?,
+                    starting_balance = ?, alert_threshold = ?, warning_threshold = COALESCE(?, warning_threshold), period_start = ?,
                     prev_period_start = ?, prev_period_end = ?, prev_period_cost_usd = ?, prev_period_days = ?, updated_at = ?
             """, (
-                starting_balance, alert_threshold, now, old_period_start, now, prev_cost, prev_days, now,
-                starting_balance, alert_threshold, now, old_period_start, now, prev_cost, prev_days, now,
+                starting_balance, alert_threshold, warning_threshold, now, old_period_start, now, prev_cost, prev_days, now,
+                starting_balance, alert_threshold, warning_threshold, now, old_period_start, now, prev_cost, prev_days, now,
             ))
         else:
             conn.execute("""
-                INSERT INTO credit_config (id, starting_balance, alert_threshold, updated_at)
-                VALUES (1, ?, ?, ?)
-                ON CONFLICT(id) DO UPDATE SET starting_balance = ?, alert_threshold = ?, updated_at = ?
-            """, (starting_balance, alert_threshold, now, starting_balance, alert_threshold, now))
+                INSERT INTO credit_config (id, starting_balance, alert_threshold, warning_threshold, updated_at)
+                VALUES (1, ?, ?, COALESCE(?, 5.0), ?)
+                ON CONFLICT(id) DO UPDATE SET starting_balance = ?, alert_threshold = ?, warning_threshold = COALESCE(?, warning_threshold), updated_at = ?
+            """, (starting_balance, alert_threshold, warning_threshold, now, starting_balance, alert_threshold, warning_threshold, now))
         conn.commit()
+
+
+def mark_alert_sent() -> None:
+    """Record that a low-credit alert was just sent, to drive the cooldown in api.py."""
+    with get_connection() as conn:
+        conn.execute(
+            "UPDATE credit_config SET last_alert_sent_at = ? WHERE id = 1",
+            (datetime.now().isoformat(),),
+        )
+        conn.commit()
+
+
+def clear_alert_cooldown() -> None:
+    """Reset the alert cooldown once balance recovers above threshold, so the next
+    time it drops below threshold, the alert fires immediately instead of waiting
+    out a stale cooldown window from the previous low-balance period."""
+    with get_connection() as conn:
+        conn.execute("UPDATE credit_config SET last_alert_sent_at = NULL WHERE id = 1")
+        conn.commit()
+
+
+def mark_warning_sent() -> None:
+    """Record that a warning-tier low-credit alert was just sent."""
+    with get_connection() as conn:
+        conn.execute(
+            "UPDATE credit_config SET last_warning_sent_at = ? WHERE id = 1",
+            (datetime.now().isoformat(),),
+        )
+        conn.commit()
+
+
+def clear_warning_cooldown() -> None:
+    """Reset the warning cooldown once balance recovers above warning_threshold."""
+    with get_connection() as conn:
+        conn.execute("UPDATE credit_config SET last_warning_sent_at = NULL WHERE id = 1")
+        conn.commit()
+
+
+def mark_spike_alert_sent(date_str: str) -> None:
+    """Record the date a spend-spike alert was sent, to cap it at once/day."""
+    with get_connection() as conn:
+        conn.execute("UPDATE credit_config SET last_spike_alert_date = ? WHERE id = 1", (date_str,))
+        conn.commit()
+
+
+def mark_digest_sent(date_str: str) -> None:
+    """Record the date the daily digest was sent, to cap it at once/day."""
+    with get_connection() as conn:
+        conn.execute("UPDATE credit_config SET last_digest_sent_date = ? WHERE id = 1", (date_str,))
+        conn.commit()
+
+
+def mark_web_search_budget_alert_sent(date_str: str) -> None:
+    """Record the date a web_search budget alert was sent, to cap it at once/day."""
+    with get_connection() as conn:
+        conn.execute("UPDATE credit_config SET last_web_search_budget_alert_date = ? WHERE id = 1", (date_str,))
+        conn.commit()
+
+
+# ── Alert query helpers ───────────────────────────────────────────────────────
+
+def total_cost_for_date(date_str: str, project: str | None = None) -> float:
+    """Sum estimated_cost_usd for one calendar date (YYYY-MM-DD), optionally one project."""
+    where_parts, params = ["DATE(created_at) = ?"], [date_str]
+    if project:
+        where_parts.append("project = ?")
+        params.append(project)
+    with get_connection() as conn:
+        row = conn.execute(f"""
+            SELECT SUM(estimated_cost_usd) AS cost_usd
+            FROM usage_logs WHERE {" AND ".join(where_parts)}
+        """, params).fetchone()
+    return row["cost_usd"] or 0.0
+
+
+def web_search_cost_for_date(date_str: str, project: str | None = None) -> float:
+    """Sum web_search's flat per-use fee for one calendar date. Exact (unlike a
+    tools_used-based join) because web_search_requests is tracked per-turn."""
+    where_parts, params = ["DATE(created_at) = ?"], [date_str]
+    if project:
+        where_parts.append("project = ?")
+        params.append(project)
+    with get_connection() as conn:
+        row = conn.execute(f"""
+            SELECT SUM(web_search_requests) AS requests
+            FROM usage_logs WHERE {" AND ".join(where_parts)}
+        """, params).fetchone()
+    return (row["requests"] or 0) * _WEB_SEARCH_COST_PER_USE
+
+
+def trailing_daily_average(before_date: str, days: int = 7, project: str | None = None) -> float:
+    """Average daily spend over the `days` calendar dates strictly before `before_date`."""
+    where_parts, params = ["DATE(created_at) < ?", "DATE(created_at) >= DATE(?, ?)"], [before_date, before_date, f"-{days} days"]
+    if project:
+        where_parts.append("project = ?")
+        params.append(project)
+    with get_connection() as conn:
+        row = conn.execute(f"""
+            SELECT SUM(estimated_cost_usd) AS cost_usd, COUNT(DISTINCT DATE(created_at)) AS active_days
+            FROM usage_logs WHERE {" AND ".join(where_parts)}
+        """, params).fetchone()
+    active_days = row["active_days"] or 0
+    return (row["cost_usd"] or 0.0) / active_days if active_days > 0 else 0.0
+
+
+def daily_digest(date_str: str, project: str | None = None) -> dict:
+    """Spend, tokens, request count, and top 3 tools for one calendar date — used by the
+    daily Discord digest."""
+    where_parts, params = ["DATE(created_at) = ?"], [date_str]
+    if project:
+        where_parts.append("project = ?")
+        params.append(project)
+    where = " AND ".join(where_parts)
+    with get_connection() as conn:
+        totals = conn.execute(f"""
+            SELECT COUNT(*) AS requests, SUM(estimated_cost_usd) AS cost_usd,
+                   SUM(input_tokens) AS input_tokens, SUM(output_tokens) AS output_tokens
+            FROM usage_logs WHERE {where}
+        """, params).fetchone()
+        top_tools = conn.execute(f"""
+            SELECT json_each.value AS tool_name, COUNT(*) AS calls
+            FROM usage_logs, json_each(usage_logs.tools_used)
+            WHERE {where}
+            GROUP BY json_each.value
+            ORDER BY calls DESC
+            LIMIT 3
+        """, params).fetchall()
+    return {
+        "requests": totals["requests"] or 0,
+        "cost_usd": totals["cost_usd"] or 0.0,
+        "input_tokens": totals["input_tokens"] or 0,
+        "output_tokens": totals["output_tokens"] or 0,
+        "top_tools": [dict(r) for r in top_tools],
+    }
 
 
 # ── Notes CRUD ────────────────────────────────────────────────────────────────
