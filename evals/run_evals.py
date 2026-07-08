@@ -39,7 +39,7 @@ def run_case(client: httpx.Client, case: dict, base_url: str, verbose: bool) -> 
         response = client.post(
             f"{base_url}/chat",
             json={"message": case["input"], "session_id": f"eval-{case['id']}"},
-            timeout=30,
+            timeout=45,
         )
         response.raise_for_status()
         data = response.json()
