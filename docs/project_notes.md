@@ -136,6 +136,7 @@ python -m uvicorn api:app --reload --port 8000
 ---
 
 ## Next Steps to Explore
+- Added `web_search` tool and a `project_notes.md`-only text editor tool today
 - Replace mock weather with real OpenWeatherMap API
 - Add user authentication (JWT tokens)
 - Switch from SQLite to PostgreSQL

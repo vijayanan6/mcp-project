@@ -257,6 +257,22 @@ A high-level checkbox names a topic; it doesn't guarantee every layer underneath
 
 ---
 
+## 26. Not Every Tool Call Looks the Same in the Response — Tracking Code Has to Know That
+
+`tools_used.append(block.name)` only checked `block.type == "tool_use"` — correct for MCP tools and any client-side tool, but wrong for server-side tools like `web_search`, which arrive as a `server_tool_use` block instead. The bug was silent: the chat UI still showed the tool-call indicator correctly (that rendering path checked something else), and the dollar total in the cost dashboard was still right (that math came from a separate `usage.server_tool_use.web_search_requests` field). Only the "Cost by Tool" breakdown was wrong — `web_search` calls existed and were billed correctly, they just never got attributed to a tool in that one specific view.
+
+The general shape: when an API has more than one way to represent "a tool was called," any code that pattern-matches on one shape will silently miss the others, and the failure won't announce itself — everything downstream that doesn't depend on the missed case keeps working. The fix isn't "test more" in the abstract; it's checking the *specific* field you're aggregating into (here: querying `/usage/data` directly and noticing `by_tool` was empty for a tool you know was called) rather than trusting that "the feature looks like it works" means every code path behind it does too.
+
+---
+
+## 27. Declaring a Tool Is a Commitment to Every Model That Might See It
+
+Adding `web_search` to the shared tool list broke messages that had nothing to do with web search — "add a comment to api.py" 400'd with an error naming `web_search`, not the actual request. The cause: the Anthropic API validates every *declared* tool against the model's capabilities at request time, not just the tools a model decides to invoke that turn. `web_search_20260209`'s default configuration requires programmatic tool calling, which Haiku doesn't support — and this project's `_pick_model()` router can send *any* short, non-complex-sounding message to Haiku, completely independent of whether that message might need web search.
+
+This is the same failure shape as adding a new required field to a shared schema without checking every consumer — except here the "consumers" are the different models a single router can select, and the incompatibility only shows up at request time, not at declaration time. Any time a tool is added to a list shared across multiple models (a router, a fallback chain, an A/B test), the right question isn't "does my primary model support this tool's config" — it's "does *every* model this code can route to support it," because the API fails the whole request, not just the unsupported feature, when one doesn't.
+
+---
+
 ## The Core Takeaway
 
 You started wanting to understand MCP.

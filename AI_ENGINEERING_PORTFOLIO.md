@@ -25,6 +25,7 @@ Browser ──HTTP/SSE──► FastAPI (api.py) ──stdio/JSON-RPC──► M
 |-------|-----------|
 | LLM | Claude Sonnet 4.6 / Haiku 4.5 (Anthropic) |
 | AI Protocol | MCP (Model Context Protocol) |
+| Native Tools | web_search (server-side), text editor (client-side, `BetaAsyncBuiltinFunctionTool`) |
 | Web Framework | FastAPI + Uvicorn |
 | Vector Database | ChromaDB |
 | Embeddings | sentence-transformers (all-MiniLM-L6-v2) |
@@ -292,6 +293,31 @@ resp = client.messages.create(
 - **Manual multi-turn loop** — built the `tool_use` → execute → `tool_result` → loop cycle from scratch (save a note, read it back, 3 turns total), matching `tool_use_id` by hand and verifying the SQLite write actually persisted via `inspect_db.py` — not just trusting the model's summary
 
 **Why this matters:** every production framework (`tool_runner`, LangChain agents, LlamaIndex) is a convenience layer over these exact primitives. Understanding the raw request/response cycle means being able to debug or reimplement tool-calling behavior when the abstraction doesn't fit — e.g. adding human-in-the-loop approval before a tool executes, which requires the manual loop, not `tool_runner`.
+
+---
+
+### 13. Anthropic-Native Tools — Server-Side and Client-Side, Beyond MCP
+
+Extended the tool surface beyond MCP with two Anthropic-native tools that don't run through `mcp_server.py` at all: `web_search` (server-side — Anthropic executes it) and a text editor tool (client-side — this process executes it), each requiring a different integration pattern and each surfacing a real production bug that got found and fixed with live testing, not assumption.
+
+```python
+# Client-side builtin tool: implement the SDK's runnable-tool interface
+class ProjectNotesEditorTool(BetaAsyncBuiltinFunctionTool):
+    def to_dict(self):
+        return {"type": "text_editor_20250728", "name": "str_replace_based_edit_tool"}
+
+    async def call(self, input: dict) -> str:
+        path = self._check_path(input.get("path", ""))  # hard-fails outside one allowed file
+        ...
+```
+
+**Built and verified, with real browser tests (Playwright MCP) and direct API inspection:**
+- **Server-side vs. client-side tool architecture** — `web_search` needed only a dict declaration (Anthropic resolves it entirely); the text editor tool required implementing `BetaAsyncBuiltinFunctionTool` (`to_dict()` + `call()`) because Claude only *requests* the edit, this process has to execute it
+- **Path-confined tool execution** — the text editor tool is hard-restricted to exactly one file (`docs/project_notes.md`), not the whole `docs/` folder; every path is resolved and compared for exact equality before any file operation runs, verified against both `../` traversal and same-folder sibling-file escape attempts
+- **Found and fixed a silent cost-tracking gap** — server-side tool calls arrive as `server_tool_use` content blocks, a different type than the `tool_use` blocks the cost-tracking code checked for; `web_search` calls were billed correctly but invisible in the "Cost by Tool" dashboard view until this was found by directly querying `/usage/data`, not by trusting that the feature "looked like it worked"
+- **Found and fixed a real production bug via model-routing interaction** — `web_search`'s default configuration requires programmatic tool calling, which this project's Haiku tier (used by the cost-based model router) doesn't support; the Anthropic API validates *every declared tool* against model capability at request time, so unrelated Haiku-routed messages started 400ing purely from `web_search` being present in the tool list — fixed with `allowed_callers: ["direct"]`, caught by re-testing the exact failing request end-to-end after the fix, not just reasoning that it should work
+
+**Why this matters:** shared infrastructure (a tool list, a model router) has failure modes that only appear at the *intersection* of two features that each work fine independently. Finding this bug required treating a live end-to-end test as the source of truth over the code's apparent correctness — the same discipline as the earlier `.env` UTF-8 BOM bug (§Playwright MCP below), applied to a different layer of the stack.
 
 ---
 

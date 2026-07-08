@@ -53,6 +53,7 @@ def init_db() -> None:
                 cache_write_tokens  INTEGER NOT NULL DEFAULT 0,
                 cache_read_tokens   INTEGER NOT NULL DEFAULT 0,
                 output_tokens       INTEGER NOT NULL DEFAULT 0,
+                web_search_requests INTEGER NOT NULL DEFAULT 0,
                 estimated_cost_usd  REAL NOT NULL DEFAULT 0,
                 tools_used          TEXT NOT NULL DEFAULT '[]',
                 created_at          TEXT NOT NULL
@@ -60,8 +61,9 @@ def init_db() -> None:
         """)
         # migrate existing databases that predate these columns
         for col, definition in [
-            ("tools_used", "TEXT NOT NULL DEFAULT '[]'"),
-            ("project",    "TEXT NOT NULL DEFAULT 'mcp-project'"),
+            ("tools_used",          "TEXT NOT NULL DEFAULT '[]'"),
+            ("project",             "TEXT NOT NULL DEFAULT 'mcp-project'"),
+            ("web_search_requests", "INTEGER NOT NULL DEFAULT 0"),
         ]:
             try:
                 conn.execute(f"ALTER TABLE usage_logs ADD COLUMN {col} {definition}")
@@ -103,30 +105,35 @@ _PRICING = {
     },
 }
 
-def _estimate_cost(model: str, input_tokens: int, cache_write: int, cache_read: int, output_tokens: int) -> float:
-    """Estimate cost in USD based on token counts and model pricing."""
+# Anthropic server-side web search tool: $10 per 1,000 searches, billed per use
+# regardless of result count — separate from token costs.
+_WEB_SEARCH_COST_PER_USE = 0.01
+
+def _estimate_cost(model: str, input_tokens: int, cache_write: int, cache_read: int, output_tokens: int, web_search_requests: int = 0) -> float:
+    """Estimate cost in USD based on token counts, model pricing, and server-tool fees."""
     p = _PRICING.get(model, _PRICING["claude-sonnet-4-6"])
     return (
         input_tokens      / 1000 * p["input"] +
         cache_write       / 1000 * p["cache_write"] +
         cache_read        / 1000 * p["cache_read"] +
-        output_tokens     / 1000 * p["output"]
+        output_tokens     / 1000 * p["output"] +
+        web_search_requests * _WEB_SEARCH_COST_PER_USE
     )
 
 
 # ── Usage Logs ────────────────────────────────────────────────────────────────
 
-def usage_log(session_id: str, model: str, input_tokens: int, cache_write: int, cache_read: int, output_tokens: int, tools: list[str] | None = None, project: str = "mcp-project") -> None:
+def usage_log(session_id: str, model: str, input_tokens: int, cache_write: int, cache_read: int, output_tokens: int, tools: list[str] | None = None, project: str = "mcp-project", web_search_requests: int = 0) -> None:
     """Save token usage for one message turn."""
-    cost = _estimate_cost(model, input_tokens, cache_write, cache_read, output_tokens)
+    cost = _estimate_cost(model, input_tokens, cache_write, cache_read, output_tokens, web_search_requests)
     with get_connection() as conn:
         conn.execute(
             """
             INSERT INTO usage_logs
-              (project, session_id, model, input_tokens, cache_write_tokens, cache_read_tokens, output_tokens, estimated_cost_usd, tools_used, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              (project, session_id, model, input_tokens, cache_write_tokens, cache_read_tokens, output_tokens, web_search_requests, estimated_cost_usd, tools_used, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (project, session_id, model, input_tokens, cache_write, cache_read, output_tokens, cost, json.dumps(tools or []), datetime.now().isoformat()),
+            (project, session_id, model, input_tokens, cache_write, cache_read, output_tokens, web_search_requests, cost, json.dumps(tools or []), datetime.now().isoformat()),
         )
         conn.commit()
 
@@ -143,6 +150,7 @@ def usage_summary(project: str | None = None) -> dict:
                 SUM(cache_write_tokens)         AS total_cache_write,
                 SUM(cache_read_tokens)          AS total_cache_read,
                 SUM(output_tokens)              AS total_output,
+                SUM(web_search_requests)        AS total_web_searches,
                 SUM(estimated_cost_usd)         AS total_cost_usd,
                 MIN(created_at)                 AS first_request,
                 MAX(created_at)                 AS last_request

@@ -194,6 +194,7 @@
     <div class="card purple"><div class="label">Cache Hit Rate</div><div class="value" id="cache-hit-rate">—</div></div>
     <div class="card blue"><div class="label">Input Tokens</div><div class="value" id="total-input">—</div></div>
     <div class="card blue"><div class="label">Output Tokens</div><div class="value" id="total-output">—</div></div>
+    <div class="card yellow"><div class="label">Web Searches</div><div class="value" id="total-web-searches">—</div><div class="sub">$0.01 each</div></div>
   </div>
 
   <!-- Token Breakdown + Model Split -->
@@ -425,6 +426,7 @@
     document.getElementById('total-cost').textContent     = fmtCost(t.total_cost_usd);
     document.getElementById('total-input').textContent    = fmt(t.total_input);
     document.getElementById('total-output').textContent   = fmt(t.total_output);
+    document.getElementById('total-web-searches').textContent = fmt(t.total_web_searches || 0);
 
     const cacheRead = t.total_cache_read || 0;
     document.getElementById('cache-savings').textContent  = fmtCost((cacheRead/1000)*0.0018);

@@ -907,6 +907,35 @@ Closed the "Tool Use Fundamentals" gap in `LEARNING_PLAN.md` — a category the 
 
 ---
 
+## Phase 19 — Anthropic-Native Tools: web_search and a Sandboxed Text Editor
+
+### What We Built
+Added the first two tools that **aren't** MCP tools: `web_search` (server-side, Anthropic-hosted) and `str_replace_based_edit_tool` (client-side, executed in-process). This forced a real distinction that Phases 1–18 never needed: not everything in a Claude `tools` array is an MCP tool, and the two non-MCP flavors — server-side and client-side — have different execution models, different response content-block types, and different failure modes.
+
+### Key Concepts Learned
+
+**Server-side and client-side "Anthropic-native" tools are architecturally distinct from MCP, and from each other.** `web_search` needed nothing but a plain dict declaration — Anthropic runs it entirely on their infrastructure, and the result comes back already resolved. The text editor tool needed real handler code (`text_editor_tool.py`, implementing the SDK's `BetaAsyncBuiltinFunctionTool` interface: `to_dict()` for the declaration, `call()` to execute it) because Claude only *requests* the edit — the client has to perform it. Declaring a client-side tool as a raw dict (the way that works for `web_search`) doesn't work: `tool_runner`'s `tools` parameter only executes objects implementing the runnable-tool protocol, so a client-side tool needs the class, not a dict.
+
+**Server-side tool calls are a different content-block type, and generic tracking code silently drops them.** `tools_used.append(block.name)` only fired on `block.type == "tool_use"` — which covers MCP and client-side tools, but web_search (and the `code_execution` it runs under the hood for dynamic filtering) arrive as `server_tool_use` blocks instead. The bug was invisible in the chat UI (the tool call indicator showed correctly) and only surfaced by directly querying `/usage/data` and noticing `by_tool` had zero entries for `web_search` despite `total_web_searches` correctly showing 2. Fixed by handling `server_tool_use` alongside `tool_use` everywhere tool calls get counted.
+
+**Declaring a tool can break a model that never intended to call it.** The real production bug this phase: `_pick_model()` can route *any* short/simple message to Haiku, and `web_search_20260209`'s default config requires programmatic tool calling, which Haiku doesn't support. The API validates every *declared* tool against the model's capabilities at request time — not just tools the model actually decides to use — so a completely unrelated message ("add a comment to api.py") 400'd purely because `web_search` was sitting in the tools array. The fix (`allowed_callers: ["direct"]`) was a one-line change, but finding it required noticing the error message named the *tool*, not the *user's message*, as the cause.
+
+**A hard-coded single-file restriction is a legitimate security boundary, and it's cheap to verify.** Rather than confining the text editor tool to the whole `docs/` folder (the "obvious" boundary, matching `read_doc`'s existing pattern), it was scoped to exactly one file — `docs/project_notes.md` — because that was the only concrete use case (keeping a living doc in sync). Verified three ways before trusting it: a direct Python test (bypassing the API) confirming traversal (`../api.py`) and sibling files in the same folder both raise `ToolError`; then a real end-to-end browser test explicitly asking Claude to edit `api.py`, which was refused at the *prompt* level (Claude cited the restriction) before the hard filesystem check would even have needed to fire.
+
+**A quantified trade-off beats a reflexive "more correct" fix.** The `allowed_callers: ["direct"]` fix disables dynamic filtering (server-side result pre-filtering that reduces tokens on noisy searches) even for Sonnet-routed requests that could support it. A model-aware fix — different tool config depending on which model `_pick_model()` selected — would recover that efficiency, but the actual token savings from dynamic filtering weren't quantifiable from available documentation, and the blanket fix was already tested and safe. Decision: keep the simpler, verified fix; revisit only if the cost dashboard later shows `web_search` turns burning noticeably more tokens than expected. Not every theoretically-more-correct fix is worth the added complexity.
+
+### Before vs After
+| | Before | After |
+|---|---|---|
+| Tool count | 8 (all MCP) | 10 — 8 MCP + 1 server-side (`web_search`) + 1 client-side (`str_replace_based_edit_tool`) |
+| Tool execution models understood | 1 (MCP over stdio/JSON-RPC) | 3 (MCP, Anthropic server-side, local client-side via `BetaAsyncBuiltinFunctionTool`) |
+| Cost dashboard `by_tool` | Silently dropped every server-side tool call | Correctly attributes `web_search`, `code_execution`, and `str_replace_based_edit_tool` |
+| Cost tracking | Token costs only | Token costs + web_search's flat $10/1,000-searches fee, folded into `estimated_cost_usd` automatically |
+| Model routing robustness | Untested against tool/model capability mismatches | Found and fixed a real 400 affecting every Haiku-routed request once `web_search` was added |
+| File-mutation capability | None — all 8 original tools are read-only or SQLite-backed | Claude can edit exactly one real file (`docs/project_notes.md`), verified against traversal and sibling-file escape attempts |
+
+---
+
 ## Final Architecture
 
 ```
@@ -916,7 +945,7 @@ Browser (http://localhost:8000)
   ▼
 api.py (FastAPI)
   │
-  ├──► Claude Sonnet 4.6 (Anthropic API)
+  ├──► Claude Sonnet 4.6 / Haiku 4.5 (Anthropic API)
   │         │
   │         │ tool calls
   │         ▼
@@ -935,6 +964,10 @@ api.py (FastAPI)
   │                 ├── .md files
   │                 └── .pdf → convert_pdfs.py → .txt
   │
+  ├──► text_editor_tool.py (client-side tool — locked to docs/project_notes.md)
+  │
+  ├──► web_search (server-side tool — runs on Anthropic's infrastructure)
+  │
   └──► agent.py (CLI — original learning version, still works)
 ```
 
@@ -945,8 +978,9 @@ api.py (FastAPI)
 | Layer | Technology | Purpose |
 |---|---|---|
 | AI Model | Claude Sonnet 4.6 / Haiku 4.5 | Language model (routed by query complexity) |
-| AI SDK | Anthropic Python SDK | API client + tool runner |
+| AI SDK | Anthropic Python SDK | API client + tool runner + `BetaAsyncBuiltinFunctionTool` |
 | Tool Protocol | MCP (Model Context Protocol) | Standard for AI tools |
+| Native Tools | web_search (server-side), text editor (client-side) | Non-MCP Anthropic tools, declared directly in `api.py` |
 | Web Framework | FastAPI | REST API + SSE streaming |
 | Web Server | Uvicorn | ASGI server |
 | Database | SQLite | Persistent notes + sessions |

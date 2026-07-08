@@ -20,20 +20,38 @@ Browser
         ▼
   api.py (FastAPI — port 8000)
         │
-        ├── Anthropic API (Claude Sonnet 4.6)
+        ├── Anthropic API (Claude Sonnet 4.6 / Haiku 4.5)
         │         │
         │         │ tool calls
         │         ▼
-        └── mcp_server.py (MCP Server — subprocess)
-                  │
-                  ├── database.py  →  data.db (SQLite)
-                  ├── rag.py       →  chroma_db/ (ChromaDB)
-                  └── docs/        →  your documents
+        ├── mcp_server.py (MCP Server — subprocess, 8 tools)
+        │         │
+        │         ├── database.py  →  data.db (SQLite)
+        │         ├── rag.py       →  chroma_db/ (ChromaDB)
+        │         └── docs/        →  your documents
+        │
+        ├── text_editor_tool.py (client-side tool, in-process — locked to docs/project_notes.md)
+        │
+        └── web_search (server-side tool — Anthropic executes it, no local process involved)
 ```
 
 There is also `agent.py` — the original CLI version of the agent. It
 connects to the same `mcp_server.py` but uses the terminal instead of
 a browser. Both interfaces work.
+
+**Three tool execution models feed the same `tools` list** passed to Claude — this is easy to
+miss since they all show up identically as "tools available" in the UI:
+
+| Model | Who executes it | Example |
+|---|---|---|
+| MCP | `mcp_server.py`, over stdio/JSON-RPC | `search_docs`, `manage_notes`, ... |
+| Server-side | Anthropic's own infrastructure — declared as a plain dict, no local code | `web_search` |
+| Client-side | A local Python object implementing `BetaAsyncBuiltinFunctionTool`, run in-process by `api.py` | `str_replace_based_edit_tool` |
+
+Response content blocks reflect this split: MCP/client-side tool calls arrive as `tool_use`
+blocks; server-side tool calls arrive as `server_tool_use` blocks instead. Code that tracks
+tool usage (e.g. for the cost dashboard) must check both block types, or server-side tool
+calls disappear from that tracking silently — see Insight #26 in `INSIGHTS.md`.
 
 ---
 
@@ -78,6 +96,15 @@ Handles document indexing and retrieval using ChromaDB.
 - Stores vectors in ChromaDB on disk
 - On a search query: embeds the question, finds the 4 most similar chunks,
   returns them with source filename and relevance score
+
+### text_editor_tool.py — Client-Side Text Editor Tool
+`ProjectNotesEditorTool`, implementing the Anthropic SDK's `BetaAsyncBuiltinFunctionTool`
+interface — the same pattern the SDK itself uses for its reference memory tool.
+
+- Declares the tool via `to_dict()` → `{"type": "text_editor_20250728", "name": "str_replace_based_edit_tool"}`
+- Executes `view` / `create` / `str_replace` / `insert` commands via `call()`, run directly by `api.py` — no MCP, no subprocess
+- Every path Claude sends is resolved with `Path.resolve()` and compared against the exact resolved path of `docs/project_notes.md`; anything else (other files in `docs/`, `../` traversal, absolute paths) raises `ToolError` before touching the filesystem
+- `create` backs up an existing file (`.bak`) before overwriting; `str_replace` refuses ambiguous matches (0 or 2+ occurrences of `old_str`)
 
 ### agent.py — CLI Agent
 The original learning version. Same MCP connection logic as api.py
@@ -143,6 +170,15 @@ against this project's own `get_weather` and `manage_notes` tool schemas.
 
 ---
 
+## The 2 Non-MCP Tools
+
+| Tool | What it does | Execution |
+|---|---|---|
+| `web_search` | Live web search for time-sensitive/current info `search_docs` can't cover | Server-side — Anthropic's infrastructure. `max_uses: 3`, `allowed_callers: ["direct"]` (required so it works when routed to Haiku — see Model Routing below). $10/1,000 searches + tokens. |
+| `str_replace_based_edit_tool` | View/edit exactly `docs/project_notes.md` | Client-side — `ProjectNotesEditorTool` in `text_editor_tool.py`, run in-process by `api.py` |
+
+---
+
 ## How a Question Gets Answered
 
 Here is the step-by-step flow when a user asks a question in the browser:
@@ -153,7 +189,7 @@ Here is the step-by-step flow when a user asks a question in the browser:
 4. api.py loads the conversation history for that session from SQLite
 5. `_pick_model()` routes the message: Haiku for short/simple queries, Sonnet for long or doc-related ones
 6. `_safe_window()` trims history to the last 10 messages, dropping any orphaned `tool_result` turns
-7. api.py sends the window plus all 8 tool schemas to Claude, with the system prompt marked `cache_control: ephemeral`
+7. api.py sends the window plus all 10 tool schemas (8 MCP + `web_search` + `str_replace_based_edit_tool`) to Claude, with the system prompt marked `cache_control: ephemeral`
 8. Claude reads the cached system prompt: *"call search_docs for topic-specific questions; skip for clearly general ones"*
 9. Claude decides whether to call `search_docs` based on the question type
 10. api.py forwards the tool call to mcp_server.py via stdin/stdout
@@ -220,8 +256,9 @@ usage_logs table
   cache_write_tokens  — system prompt tokens written to cache
   cache_read_tokens   — system prompt tokens read from cache (cheap)
   output_tokens       — tokens Claude generated
-  estimated_cost_usd  — calculated from token counts × pricing table
-  tools_used          — JSON array of tool names called this turn
+  web_search_requests — count of web_search calls this turn ($0.01 each, folded into estimated_cost_usd)
+  estimated_cost_usd  — token costs × pricing table, plus web_search_requests × $0.01
+  tools_used          — JSON array of tool names called this turn (MCP tool_use + server_tool_use blocks)
   created_at          — timestamp
 
 credit_config table (singleton — always id=1)
@@ -280,6 +317,16 @@ Message arrives
 Haiku is 10–20× cheaper than Sonnet for short conversational questions. Sonnet is
 used when the query is complex or involves document reasoning. The chosen model is
 included in the `done` SSE event so the UI can display which model answered.
+
+**Gotcha discovered adding `web_search`:** the router decides cost tier, not tool
+eligibility — a short message with no complex-signal keyword can still need `web_search`
+per the system prompt's own routing rules (anything time-sensitive), and it still goes to
+Haiku. The Anthropic API validates every *declared* tool against the model's capabilities
+at request time, regardless of whether that tool is actually called that turn — so any
+Haiku-routed request with `web_search_20260209` declared at its default config (which
+requires programmatic tool calling) 400s immediately, even for messages that never touch
+search. Fixed by setting `allowed_callers: ["direct"]` on the tool declaration so it works
+under every model the router can select. See Insight #27 in `INSIGHTS.md`.
 
 ---
 
@@ -354,6 +401,7 @@ MCP Project/
 ├── api.py              Web server — FastAPI, routes, SSE, lifespan
 ├── agent.py            CLI agent — terminal interface, same MCP logic
 ├── mcp_server.py       MCP server — 8 tool definitions and handlers
+├── text_editor_tool.py Client-side text editor tool — locked to docs/project_notes.md
 ├── database.py         SQLite helpers — notes and sessions CRUD
 ├── rag.py              ChromaDB helpers — chunk, embed, index, search
 ├── convert_pdfs.py     PDF OCR — pymupdf + Tesseract → txt

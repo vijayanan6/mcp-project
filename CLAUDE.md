@@ -35,36 +35,52 @@ Tesseract must be installed at `C:\Program Files\Tesseract-OCR\` for `convert_pd
 
 Three processes when the web app runs:
 
-**`api.py`** — FastAPI web server. Spawns `mcp_server.py` on startup via lifespan, keeps it alive across all requests. Handles HTTP routes, SSE streaming, session management. Auto-indexes docs into ChromaDB on startup. Stores sessions in SQLite.
+**`api.py`** — FastAPI web server. Spawns `mcp_server.py` on startup via lifespan, keeps it alive across all requests. Handles HTTP routes, SSE streaming, session management. Auto-indexes docs into ChromaDB on startup. Stores sessions in SQLite. Also declares two non-MCP Anthropic tools directly in `app.state.tools` — see "Non-MCP Tools" below.
 
 **`mcp_server.py`** — MCP server with 8 tools. No knowledge of Claude or HTTP. Notes stored in SQLite via `database.py`. Document search via `rag.py` + ChromaDB.
+
+**`text_editor_tool.py`** — `ProjectNotesEditorTool`, a client-side Anthropic builtin tool (`BetaAsyncBuiltinFunctionTool`) executed in-process by `api.py`, not via MCP.
 
 **`agent.py`** — Original CLI version. Same MCP connection logic as `api.py` but uses `input()` instead of HTTP.
 
 ```
-Browser ──HTTP/SSE──► api.py ──stdio/JSON-RPC──► mcp_server.py
+Browser ──HTTP/SSE──► api.py ──stdio/JSON-RPC──► mcp_server.py (8 tools)
                         │
-                        └──► Anthropic API (Claude claude-sonnet-4-6)
+                        ├──► text_editor_tool.py (client-side, in-process)
+                        │
+                        └──► Anthropic API (Claude Sonnet 4.6 / Haiku 4.5)
+                                  └── web_search (server-side, runs on Anthropic's infra)
 ```
 
-## Tools (8 total)
+## Tools (10 total)
 
-| Tool | Notes |
-|---|---|
-| `get_current_datetime` | No params |
-| `calculate` | `eval()` with restricted namespace — only math functions allowed |
-| `get_weather` | Mock data dict — replace with real API for production |
-| `manage_notes` | SQLite-backed — persists across restarts via `database.py` |
-| `list_docs` | Reads `docs/` folder; supports `.txt .md .csv .json .py .html .xml .pdf` |
-| `read_doc` | Path traversal blocked; 8000-char cap; PDF via `pypdf` or `pymupdf+Tesseract` |
-| `index_docs` | Chunks all docs → embeds with `all-MiniLM-L6-v2` → stores in ChromaDB |
-| `search_docs` | Semantic search via ChromaDB; returns top N chunks with relevance scores |
+Three different execution models share one `tools` list passed to Claude — don't assume every tool is an MCP tool.
+
+| Tool | Execution | Notes |
+|---|---|---|
+| `get_current_datetime` | MCP | No params |
+| `calculate` | MCP | `eval()` with restricted namespace — only math functions allowed |
+| `get_weather` | MCP | Mock data dict — replace with real API for production |
+| `manage_notes` | MCP | SQLite-backed — persists across restarts via `database.py` |
+| `list_docs` | MCP | Reads `docs/` folder; supports `.txt .md .csv .json .py .html .xml .pdf` |
+| `read_doc` | MCP | Path traversal blocked; 8000-char cap; PDF via `pypdf` or `pymupdf+Tesseract` |
+| `index_docs` | MCP | Chunks all docs → embeds with `all-MiniLM-L6-v2` → stores in ChromaDB |
+| `search_docs` | MCP | Semantic search via ChromaDB; returns top N chunks with relevance scores |
+| `web_search` | **Server-side** | Anthropic-hosted, no local code executes it. `max_uses: 3` caps searches/turn. `allowed_callers: ["direct"]` is required — the `web_search_20260209` default (`["code_execution_20260120"]`, for dynamic filtering) 400s on Haiku, which `_pick_model()` can route to and which doesn't support programmatic tool calling. |
+| `str_replace_based_edit_tool` | **Client-side** | `ProjectNotesEditorTool` in `text_editor_tool.py`. Hardcoded to `docs/project_notes.md` only — every path Claude sends is resolved and compared against that exact file; anything else (other `docs/` files, `../` traversal, absolute paths) raises `ToolError` before touching disk. |
 
 ## Adding a New Tool
 
+**MCP tool** (runs in `mcp_server.py`, needs local execution logic):
 1. Add a `types.Tool(...)` entry in `list_tools()` in `mcp_server.py`
 2. Add an `if name == "tool_name":` handler in `call_tool()` returning `list[types.TextContent]`
 3. Restart `api.py` — tool discovery is automatic on each session start
+
+**Anthropic server-side tool** (e.g. web_search, code_execution): declare it as a plain dict directly in `app.state.tools` in `api.py`'s lifespan (see `web_search_tool` there) — Anthropic executes it, no local handler needed. Check `allowed_callers` against every model your app routes to, per the `web_search` gotcha above.
+
+**Anthropic client-side builtin tool** (e.g. text editor, bash): write a class implementing `anthropic.lib.tools.BetaAsyncBuiltinFunctionTool` (`to_dict()` returns the tool declaration, `call(input)` executes it) — see `text_editor_tool.py` — and instantiate it into `app.state.tools`. Client-side tools must NOT be declared as raw dicts in `tool_runner()`'s `tools` list — the runner only executes objects implementing this interface.
+
+`server_tool_use` blocks (server-side tools) are a **different content-block type** than `tool_use` (client/MCP tools) in the response stream — code that only checks `block.type == "tool_use"` for logging/tracking (e.g. `tools_used.append(...)`) will silently miss every server-side tool call. Handle both types wherever tool calls are counted.
 
 ## Cost Dashboard & Credit Tracking
 
@@ -74,6 +90,8 @@ Browser ──HTTP/SSE──► api.py ──stdio/JSON-RPC──► mcp_server.
 `POST /usage/credit`  — save starting balance and alert threshold `{ starting_balance: 5.00, alert_threshold: 1.00, reset: false }`
 
 Features: credit balance tracker, burn rate ($/day), estimated runway (labeled "Est. Runway" — a burn-rate forecast, not an actual credit expiration; API credits don't expire on a day count), 30/60/90-day cost forecast, per-session cost table, cost by tool, cost by project, low-credit alert badge in chat header (pulses red when remaining < threshold).
+
+**web_search cost tracking:** `web_search` is billed at $10 per 1,000 searches ($0.01/use) on top of normal token costs — a flat server-side fee, not derivable from token counts. `usage_logs.web_search_requests` (read from `usage.server_tool_use.web_search_requests` on each turn) stores the raw count; `_estimate_cost()` in `database.py` folds `web_search_requests × $0.01` into `estimated_cost_usd`, so it flows automatically into every existing aggregate (by_model, by_day, by_session, by_tool, by_project, credit/burn-rate math) with no separate dashboard wiring. The "Web Searches" stat card on `/usage` surfaces the raw count.
 
 ### Resetting Spend Tracking (Balance Top-Ups)
 

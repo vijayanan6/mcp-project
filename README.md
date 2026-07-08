@@ -21,6 +21,7 @@ MCP Project/
 ├── api.py                  — FastAPI web server (primary entry point)
 ├── agent.py                — CLI agent (original learning version)
 ├── mcp_server.py            — MCP server with 8 tools
+├── text_editor_tool.py      — Client-side text editor tool, locked to docs/project_notes.md
 ├── database.py              — SQLite layer (notes, sessions, usage_logs, credit_config)
 ├── rag.py                   — ChromaDB semantic search
 ├── convert_pdfs.py          — Tesseract OCR for scanned PDFs
@@ -57,10 +58,14 @@ api.py (FastAPI)
   ├──► Claude Sonnet 4.6 / Haiku 4.5 (Anthropic API — routed by query complexity)
   │         │ tool calls
   │         ▼
-  └──► mcp_server.py (8 MCP Tools)
-            ├──► database.py  → SQLite (notes, sessions, usage_logs, credit_config)
-            ├──► rag.py       → ChromaDB (semantic document search)
-            └──► docs/        → your documents (txt, md, PDF)
+  ├──► mcp_server.py (8 MCP Tools)
+  │         ├──► database.py  → SQLite (notes, sessions, usage_logs, credit_config)
+  │         ├──► rag.py       → ChromaDB (semantic document search)
+  │         └──► docs/        → your documents (txt, md, PDF)
+  │
+  ├──► text_editor_tool.py (client-side tool, in-process — locked to docs/project_notes.md)
+  │
+  └──► web_search (server-side tool — runs on Anthropic's infrastructure, no local code)
 ```
 
 Three processes run together: the browser, `api.py`, and `mcp_server.py` (spawned as a subprocess
@@ -68,18 +73,22 @@ and kept alive for the life of the app). See `ARCHITECTURE.md` for the full requ
 
 ---
 
-## All 8 Tools
+## All 10 Tools
 
-| Tool | Description |
-|---|---|
-| `get_current_datetime` | Current date and time |
-| `calculate` | Safe math expression evaluator |
-| `get_weather` | Mock weather data by city |
-| `manage_notes` | Persistent CRUD notes (SQLite) |
-| `list_docs` | Lists files in docs/ folder |
-| `read_doc` | Reads full content of a document |
-| `index_docs` | Indexes docs into ChromaDB for semantic search |
-| `search_docs` | Semantic search — finds relevant chunks for any query |
+Three different execution models, one `tools` list:
+
+| Tool | Execution | Description |
+|---|---|---|
+| `get_current_datetime` | MCP | Current date and time |
+| `calculate` | MCP | Safe math expression evaluator |
+| `get_weather` | MCP | Mock weather data by city |
+| `manage_notes` | MCP | Persistent CRUD notes (SQLite) |
+| `list_docs` | MCP | Lists files in docs/ folder |
+| `read_doc` | MCP | Reads full content of a document |
+| `index_docs` | MCP | Indexes docs into ChromaDB for semantic search |
+| `search_docs` | MCP | Semantic search — finds relevant chunks for any query |
+| `web_search` | Server-side (Anthropic) | Live web search for anything time-sensitive or beyond training data. $10/1,000 searches + token cost. |
+| `str_replace_based_edit_tool` | Client-side (local) | Lets Claude view/edit exactly one file — `docs/project_notes.md` — nothing else |
 
 ---
 
@@ -133,9 +142,14 @@ tool-level, and multi-project.
 | `POST /usage/credit` | Save starting balance + alert threshold |
 
 Features: 4-way token breakdown (input / cache write / cache read / output), cost by model
-(Haiku vs Sonnet), 14-day daily usage chart, **30/60/90-day cost forecast**, cost by MCP tool,
-cost by project, per-session cost ranking, credit balance tracker with burn rate and days
-remaining, and a low-credit alert badge that pulses in the chat header.
+(Haiku vs Sonnet), 14-day daily usage chart, **30/60/90-day cost forecast**, cost by tool
+(MCP and non-MCP — see below), cost by project, per-session cost ranking, a "Web Searches"
+stat card, credit balance tracker with burn rate and days remaining, and a low-credit alert
+badge that pulses in the chat header.
+
+`web_search`'s flat $10/1,000-searches fee (separate from token costs) is folded into
+`estimated_cost_usd` automatically, so it flows into every chart above with no special
+handling — see `CLAUDE.md` for how.
 
 This dashboard tracks **Anthropic API usage only** — not your Claude Pro subscription (a separate,
 flat-fee product). See `CLAUDE.md` for the full feature list and multi-project setup instructions.
@@ -192,6 +206,8 @@ since the API key was correct and the failure only appeared once a real request 
 
 ## How to Add a New Tool
 
+**MCP tool** (needs local execution logic — most tools):
+
 **Step 1 — Declare the tool** in `list_tools()` inside `mcp_server.py`:
 ```python
 types.Tool(
@@ -209,6 +225,12 @@ if name == "my_tool":
 ```
 
 Restart the server — Claude discovers the new tool automatically.
+
+**Anthropic-native tool** (server-side like `web_search`, or client-side like the text editor):
+these bypass MCP entirely and are declared directly in `app.state.tools` inside `api.py`'s
+lifespan — see `CLAUDE.md` § Adding a New Tool for the server-side vs. client-side pattern
+and the `allowed_callers`/model-capability gotcha that broke Haiku-routed requests during
+this project's `web_search` rollout.
 
 ---
 
@@ -248,6 +270,7 @@ This handles documents of any size — only the relevant parts are sent to Claud
 | `index_all()` | `rag.py` | Chunks + embeds all docs into ChromaDB |
 | `search()` | `rag.py` | Semantic similarity search |
 | `async_mcp_tool()` | `agent.py` / `api.py` | Bridges MCP tools to Anthropic SDK |
+| `BetaAsyncBuiltinFunctionTool` | `text_editor_tool.py` | SDK interface for client-side Anthropic tools — `to_dict()` + `call()` |
 
 ---
 
