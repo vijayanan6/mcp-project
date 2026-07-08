@@ -936,6 +936,32 @@ Added the first two tools that **aren't** MCP tools: `web_search` (server-side, 
 
 ---
 
+## Phase 20 — Discord Mobile Alerts: Designing for a Server That Isn't Always Running
+
+### What We Built
+The cost dashboard's low-credit badge only helped if the browser tab was open. Added four Discord-webhook-based mobile alerts — two-tier low-balance (warning $5 / critical $1), a spend-spike alert (today vs. trailing 7-day average), a per-tool budget alert (`web_search`, $1/day), and a daily digest sent on the first request of each new day — so alerts reach a phone instead of requiring the dashboard to be open.
+
+### Key Concepts Learned
+
+**The "textbook" solution assumes guarantees your app doesn't actually have.** The obvious way to build "a daily digest sent every morning" is a background scheduler (APScheduler, cron) firing at a fixed wall-clock time. That's wrong for this app: `uvicorn --reload` only runs when manually started, so a scheduler firing at 8am would silently miss every day the server wasn't running at that exact moment — a failure mode invisible until you go looking for a digest that never arrived. The actual design question wasn't "how do I schedule this," it was "does my runtime environment even support scheduling." Once framed that way, the fix was simpler than the textbook answer: piggyback on real traffic — check on every request whether today's date differs from the last-sent date, and send yesterday's digest if so. No new dependency, no missed days as long as the app gets used at some point each day.
+
+**A live-pasted secret needs handling decisions made *before* touching it, not after.** When a real Discord webhook URL landed directly in chat, the response wasn't "store it" — it was: never echo it back in any tool output, verify `.gitignore` covers `.env` structurally (`git check-ignore`) before writing to it, and use `grep -c` to confirm the write succeeded without ever printing the value. This is the same discipline as the project's documented `.env` BOM-check convention, applied to a fresh secret instead of an existing one — the habit generalizes, the specific secret doesn't.
+
+**Multi-tier alerts need explicit handling for jumps between non-adjacent tiers, not just the tiers themselves.** Building a two-tier alert (warning → critical) and testing only "does warning fire" and "does critical fire" would have shipped a real bug: dropping straight from warning into critical (skipping past the warning zone in one big cost spike) left the *warning* tier's cooldown stale. Later, if balance partially recovered back into the warning band, the alert would have silently stayed suppressed — appearing to still be in a cooldown window from an alert sent before the situation got worse. Caught only by testing the actual transition sequence (warning → critical → partial recovery), not each tier in isolation. **Generalizable principle: whenever a system has more than two states with independent cooldowns/timers, test the *transitions* between every pair of states, not just each state reached directly from "normal."**
+
+**Testing stateful, side-effecting features against production data requires capture-perturb-restore discipline, not a staging copy.** This project has no separate test database — every alert test ran against the real `credit_config` row and real `usage_logs`. The pattern used throughout: read and record the exact current values first, temporarily perturb only what's needed to force the condition (e.g., `starting_balance` to land `remaining` in a specific band), verify the effect via a direct query (not by trusting Discord delivery alone), then restore the exact original values and re-verify the restoration. Four alert types tested this way, zero corruption to real credit tracking.
+
+### Before vs After
+| | Before | After |
+|---|---|---|
+| Low-credit visibility | Passive badge, only visible with the dashboard tab open | Real-time Discord push to phone, two severity tiers |
+| Alert types | 1 (low balance only) | 4 (low-balance ×2 tiers, spend spike, per-tool budget, daily digest) |
+| Scheduled-feature design | Not yet attempted in this project | Learned to design around actual runtime guarantees (traffic-triggered) instead of defaulting to a background scheduler |
+| Multi-tier alert correctness | N/A | Found and fixed a real cooldown bug via explicit transition testing (warning → critical → partial recovery), not just per-tier testing |
+| Secret handling | `.env` conventions existed for the initial API key | Extended to a live-pasted secret mid-conversation — structural verification (`grep -c`, `git check-ignore`) instead of ever printing the value |
+
+---
+
 ## Final Architecture
 
 ```
@@ -968,6 +994,8 @@ api.py (FastAPI)
   │
   ├──► web_search (server-side tool — runs on Anthropic's infrastructure)
   │
+  ├──► Discord webhook (mobile alerts — low balance, spend spike, tool budget, digest)
+  │
   └──► agent.py (CLI — original learning version, still works)
 ```
 
@@ -981,6 +1009,7 @@ api.py (FastAPI)
 | AI SDK | Anthropic Python SDK | API client + tool runner + `BetaAsyncBuiltinFunctionTool` |
 | Tool Protocol | MCP (Model Context Protocol) | Standard for AI tools |
 | Native Tools | web_search (server-side), text editor (client-side) | Non-MCP Anthropic tools, declared directly in `api.py` |
+| Mobile Alerts | Discord webhooks | 4 alert types (low-balance ×2 tiers, spend spike, per-tool budget, daily digest), traffic-triggered, no scheduler dependency |
 | Web Framework | FastAPI | REST API + SSE streaming |
 | Web Server | Uvicorn | ASGI server |
 | Database | SQLite | Persistent notes + sessions |

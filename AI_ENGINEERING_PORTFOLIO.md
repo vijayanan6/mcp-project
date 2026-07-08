@@ -26,6 +26,7 @@ Browser ──HTTP/SSE──► FastAPI (api.py) ──stdio/JSON-RPC──► M
 | LLM | Claude Sonnet 4.6 / Haiku 4.5 (Anthropic) |
 | AI Protocol | MCP (Model Context Protocol) |
 | Native Tools | web_search (server-side), text editor (client-side, `BetaAsyncBuiltinFunctionTool`) |
+| Alerting | Discord webhooks — 4 alert types, traffic-triggered (no scheduler dependency) |
 | Web Framework | FastAPI + Uvicorn |
 | Vector Database | ChromaDB |
 | Embeddings | sentence-transformers (all-MiniLM-L6-v2) |
@@ -318,6 +319,30 @@ class ProjectNotesEditorTool(BetaAsyncBuiltinFunctionTool):
 - **Found and fixed a real production bug via model-routing interaction** — `web_search`'s default configuration requires programmatic tool calling, which this project's Haiku tier (used by the cost-based model router) doesn't support; the Anthropic API validates *every declared tool* against model capability at request time, so unrelated Haiku-routed messages started 400ing purely from `web_search` being present in the tool list — fixed with `allowed_callers: ["direct"]`, caught by re-testing the exact failing request end-to-end after the fix, not just reasoning that it should work
 
 **Why this matters:** shared infrastructure (a tool list, a model router) has failure modes that only appear at the *intersection* of two features that each work fine independently. Finding this bug required treating a live end-to-end test as the source of truth over the code's apparent correctness — the same discipline as the earlier `.env` UTF-8 BOM bug (§Playwright MCP below), applied to a different layer of the stack.
+
+---
+
+### 14. Mobile Alerting — Designing for Real Runtime Constraints, Not the Textbook Pattern
+
+Extended the cost dashboard's passive in-browser alert badge into four real-time Discord push notifications — two-tier low-balance (warning/critical), a spend-spike detector, a per-tool budget cap, and a daily digest — landing on a phone instead of requiring the dashboard tab to be open.
+
+```python
+async def _maybe_send_low_credit_alert() -> None:
+    # Two independent cooldowns, each auto-clearing on recovery — critical
+    # supersedes warning so a single drop never double-alerts
+    if remaining <= alert_threshold:
+        if cfg.get("last_warning_sent_at"):
+            clear_warning_cooldown()  # bug found via transition testing, not per-tier testing
+        ...
+```
+
+**Built and verified, with a real Discord webhook and live production data (no staging environment):**
+- **Rejected the "obvious" architecture after checking a runtime assumption** — a background scheduler firing at a fixed time (the standard way to build a "daily digest") silently assumes the process is always running, which this app isn't (`uvicorn --reload`, started manually). Redesigned the trigger to piggyback on real traffic instead: compare today's date to the last-sent date on every request, no new dependency, no missed days
+- **Found a stateful bug that per-tier testing couldn't catch** — testing "does warning fire" and "does critical fire" both passed, but the transition of dropping straight from normal into critical (skipping the warning zone) left the warning tier's cooldown stale, which would have silently suppressed a legitimate re-warn on a later partial recovery. Caught only by testing the actual transition sequence, then fixed and re-verified
+- **Handled a live secret end-to-end safely** — when a real Discord webhook URL arrived directly in the conversation, verified `.gitignore` coverage structurally (`git check-ignore`) and confirmed the write with `grep -c` rather than ever printing the value back
+- **Test discipline against production data with no staging copy** — every alert path (2 balance tiers, spike, per-tool budget, digest) was tested by capturing exact current state, temporarily perturbing only what was needed to force each condition, verifying the effect via direct query, then restoring the original values exactly — zero corruption to real credit tracking across all four test runs
+
+**Why this matters:** the highest-value bug here wasn't a syntax error or a missing null check — it was a design assumption (always-on process) that would have shipped invisibly broken, and a state-transition gap that per-state testing structurally cannot find. Both required stepping back from "does this feature work" to "does this feature's design match the environment it actually runs in."
 
 ---
 

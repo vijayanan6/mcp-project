@@ -273,6 +273,22 @@ This is the same failure shape as adding a new required field to a shared schema
 
 ---
 
+## 28. Design the Trigger Around What Your Runtime Actually Guarantees
+
+The obvious way to build "send a digest every morning" is a background scheduler firing at a fixed time. That's the wrong answer for an app that only runs when someone starts it — `uvicorn --reload` isn't a 24/7 service, so a scheduler set for 8am would silently miss every day the server happened to not be running at that exact moment, and nothing would ever surface the miss. The fix wasn't a better scheduler; it was noticing the question was wrong. Reframed as "the digest should fire once per calendar day, whenever that day's first real request happens," the mechanism became a simple date comparison on existing traffic — no new dependency, no missed days as long as the app gets used at all that day.
+
+The general shape: a "textbook" solution often silently assumes a runtime guarantee (always-on, fixed clock, persistent process) that a given deployment doesn't actually have. Before reaching for the standard pattern, check whether your environment provides the guarantee the pattern depends on — if not, the simpler fix is usually to redesign the trigger around what you *do* have, not to add infrastructure to fake the guarantee you don't.
+
+---
+
+## 29. Multi-Tier State Needs Testing at the Transitions, Not Just the Tiers
+
+Building a two-tier alert (warning, then critical), the obvious test is "does warning fire" and "does critical fire" — both passed immediately. The bug only showed up when balance dropped straight from normal into critical in one jump, skipping the warning zone entirely: the *warning* tier's cooldown was left stale, because the code that handled "entering critical" never considered "what if a warning was already pending." If balance had later partially recovered back into the warning band, the alert would have looked suppressed — as if still inside a cooldown window from an alert that, in this run, was never actually sent.
+
+Testing each tier in isolation only exercises the states a system can be *in*. It doesn't exercise the *transitions* between them — and non-adjacent transitions (skipping a state entirely) are exactly where state left over from "the state I didn't pass through" goes stale. Any system with more than two states and independent per-state timers/cooldowns needs its transition matrix tested, not just its states: normal→warning, normal→critical, warning→critical, critical→warning (partial recovery), and critical→normal (full recovery) are five different paths, not two.
+
+---
+
 ## The Core Takeaway
 
 You started wanting to understand MCP.
