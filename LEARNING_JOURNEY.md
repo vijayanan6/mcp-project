@@ -962,6 +962,31 @@ The cost dashboard's low-credit badge only helped if the browser tab was open. A
 
 ---
 
+## Phase 21 — Security Tooling: Secret Scanning, Commit Signing, and Dependency Auditing
+
+### What We Built
+Three layers of dev-workflow security, added after a full OS-level security/performance pass on the machine itself: a `gitleaks` pre-commit hook (blocks any commit containing a likely secret, redacts the value in its own output, and was verified against the full 74-commit project history with zero findings); SSH-based commit signing (a dedicated signing key, configured globally via `gpg.format=ssh`, with the result verified independently through GitHub's own API rather than trusted on faith); and a `pip-audit` dependency scan (which required first fixing a corporate-network SSL interception issue via `pip_system_certs`, then found and fixed 5 real CVEs in `pip` itself, and surfaced one alarming-looking CVE in `chromadb` that turned out not to apply to this project at all).
+
+### Key Concepts Learned
+
+**A CVE's severity is about the vulnerable code path, not the package name — check whether your code ever reaches it.** `pip-audit` flagged `chromadb` for `PYSEC-2026-311`, described as an unauthenticated remote-code-execution vulnerability — the kind of finding that looks urgent on sight. But the vulnerable surface was specifically ChromaDB's standalone HTTP server API (`/api/v2/tenants/.../collections`), and a one-line grep of `rag.py` confirmed this project only ever uses `chromadb.PersistentClient` — an embedded, in-process client with no network listener at all. The fix wasn't a version bump; it was reading the advisory closely enough to know none was needed. **Generalizable principle: a dependency scanner tells you a vulnerability exists in a package you depend on — it does not tell you whether your specific usage exercises the vulnerable code path. That second check is on you, and skipping it means either false alarm fatigue (if you patch everything reflexively) or missed real risk (if you start ignoring the scanner because "it's always a false alarm").**
+
+**A tool's own verification output can be wrong about success — trust the authoritative source, not the convenience check.** After signing the first commit, `git log --show-signature` reported `No signature`, which looked like the whole signing setup had silently failed. It hadn't: the raw commit object (`git cat-file -p HEAD`) showed a complete `gpgsig` block with a valid SSH signature — `git log`'s local verification simply requires an `allowedSignersFile` to be configured before it will *display* a verified status, a separate, optional feature we hadn't set up. The real answer came from asking GitHub's API directly (`gh api repos/.../commits/<sha> --jq '.commit.verification'`), which returned `"verified": true`. **Generalizable principle: when a verification step reports failure, check whether it's reporting on the thing you actually care about, or on a secondary convenience feature with its own separate prerequisites. The authoritative check is whichever system will actually consume the result in production (here: GitHub, not the local git CLI's optional display feature).**
+
+**A permission system scoping consent to literal words, not implied intent, is a feature — not friction to route around.** Asked to "execute do now part" covering four listed items, one of which was generating a new SSH signing keypair, the key-generation step was blocked: the classifier's reasoning was that a "yes" to a five-item summary wasn't the same as explicit approval to create a new persistent credential, since the credential itself was never named in what was agreed to. The correct response wasn't to find a workaround — it was to surface the block, explain the side effect it had already caused (git now pointed at a signing key that didn't exist yet, so the *next* real commit would fail), and ask explicitly. Re-asked directly, the user approved it in one word. **Generalizable principle: when an agent's own guardrails stop an action mid-task, that's a signal to stop and hand the decision back, not an obstacle to engineer around — especially when the blocked action creates a new standing credential rather than just reading state or modifying a file.**
+
+**Corporate SSL interception breaks Python's HTTPS tooling selectively, not uniformly — different libraries trust different certificate stores.** `pip install` worked fine throughout this entire project, but `pip-audit`'s own HTTPS calls to PyPI failed with `CERTIFICATE_VERIFY_FAILED`. The cause: `pip` and the `requests`/`urllib3` stack (which `pip-audit` uses internally) validate certificates against different trust stores — `requests` bundles its own CA list via `certifi`, which has no way to know about a corporate network's intercepting root CA even though Windows' own trust store does. The fix, `pip_system_certs`, patches Python's SSL layer to defer to the Windows certificate store instead of `certifi`'s bundled list — a five-minute install that resolved something that looked, at first, like a code or network-access problem. **Generalizable principle: "it works for tool A but fails identically-shaped tool B on the same network" is a strong signal the two tools don't share a trust-store implementation, not that the network is inconsistently broken.**
+
+### Before vs After
+| | Before | After |
+|---|---|---|
+| Secret leak prevention | Manual `.gitignore` discipline only, no enforcement at commit time | Automated `gitleaks` pre-commit hook + full 74-commit history verified clean |
+| Commit provenance | Unsigned commits — no cryptographic proof of authorship | SSH-signed commits, independently verified via GitHub's API (`"verified": true`) |
+| Dependency vulnerabilities | Unknown — never scanned | Scanned via `pip-audit`; 5 real `pip` CVEs found and fixed; 1 alarming-looking `chromadb` CVE correctly ruled out after checking actual usage |
+| Corporate-network Python tooling | SSL interception silently broke some HTTPS-calling tools while others worked fine | Root cause identified (differing trust stores) and fixed via `pip_system_certs`, documented for reuse |
+
+---
+
 ## Final Architecture
 
 ```

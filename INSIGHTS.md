@@ -289,6 +289,22 @@ Testing each tier in isolation only exercises the states a system can be *in*. I
 
 ---
 
+## 30. A CVE's Package Name Isn't Your Risk — Its Code Path Is
+
+`pip-audit` flagged `chromadb` for an advisory describing unauthenticated remote code execution — the kind of finding that reads as urgent before you've even opened it. Reading the advisory closely showed the vulnerable surface was specifically ChromaDB's standalone HTTP server API, and a one-line grep of `rag.py` confirmed this project only ever calls `chromadb.PersistentClient` — an embedded, in-process client that never opens that network endpoint at all. No fix was needed; the fix would have been reading the advisory, not bumping a version.
+
+A dependency scanner proves a vulnerability exists somewhere in a package you depend on. It does not prove your code exercises the vulnerable path. Skipping that second check produces one of two failure modes: patch everything reflexively (churn, and eventually alert fatigue that makes you stop reading advisories at all), or start ignoring the scanner because "it's always a false alarm" (and miss the one that's real). The check itself is cheap — grep for how the flagged package is actually invoked — which makes skipping it a habit problem, not a difficulty problem.
+
+---
+
+## 31. A Guardrail That Blocks You Mid-Task Is Signal, Not Friction
+
+Told to "execute" a list of four approved items, one of which was generating a new SSH signing key, the key-generation step was blocked by a permission system reasoning that a "yes" to a five-bullet summary didn't specifically name the one bullet that created a new standing credential. The natural instinct in the moment is to find a path around the block and keep the task moving. The correct move was the opposite: stop, surface exactly what got blocked and why, explain the side effect it had already caused (git was now configured to sign with a key that didn't exist, so the next real commit would fail), and ask again, explicitly. One word of re-confirmation was all it took.
+
+The generalizable version: an agent's own safety classifier stopping an action mid-stream isn't an obstacle standing between you and the "real" task — it's the system correctly noticing that consent was implied, not stated, for the one step that mattered most (creating persistent access, not just reading state or editing a file). Treating the block as the thing to solve, rather than the thing to explain, is how automation quietly outruns what a user actually agreed to.
+
+---
+
 ## The Core Takeaway
 
 You started wanting to understand MCP.

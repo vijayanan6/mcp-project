@@ -207,6 +207,33 @@ new untracked files, confirm nothing secret is in what's about to be committed, 
 Never print a secret value to diagnose it — use structural checks (`grep -c`, redacted `sed`)
 instead. This applies to every change in this repo, not just app code.
 
+## Secret Scanning & Commit Signing
+
+A `gitleaks` pre-commit hook lives at `.git/hooks/pre-commit` (local only — not tracked or
+shared via clone, like all git hooks). It runs `gitleaks protect --staged --redact --verbose`
+on every `git commit`, scanning only what's staged, and blocks the commit (non-zero exit) if a
+likely secret is found. `--redact` means it reports *where* a secret was found, never the value
+itself. If it ever blocks a false positive, add an allowlist rule to a `.gitleaks.toml` file
+(not currently present — only needed if a false positive occurs).
+
+All commits are also SSH-signed (`git config --global commit.gpgsign true`, `gpg.format ssh`,
+signing key at `~/.ssh/git_signing_key`) — this is a **global** git config, not scoped to this
+repo, so it applies to every repo on this machine. Signed commits show a green "Verified" badge
+on GitHub. Verify signing status with `gh api repos/<owner>/<repo>/commits/<sha> --jq
+'.commit.verification'` rather than `git log --show-signature`, which reports `No signature`
+locally unless `gpg.ssh.allowedSignersFile` is separately configured — that's a local display
+limitation, not a sign the commit is actually unsigned.
+
+Run `pip-audit` periodically to check installed dependencies for known CVEs. On this machine,
+`pip-audit`'s PyPI lookups fail with `CERTIFICATE_VERIFY_FAILED` due to corporate SSL
+interception (same root cause as the SSL Note above, but a different fix — `pip` itself isn't
+affected, only `requests`/`urllib3`-based tools are). Fixed once via `pip install
+pip_system_certs`, which makes Python defer to the Windows certificate store instead of
+`certifi`'s bundled CA list. When a scan flags a CVE, check whether this project's code actually
+exercises the vulnerable code path before treating it as actionable — e.g. a ChromaDB RCE
+advisory affecting its standalone HTTP server API doesn't apply here, since `rag.py` only uses
+`chromadb.PersistentClient` (embedded, no network listener).
+
 ## Git Workflow
 
 See `GIT_COMMANDS.md` for the full reference. Standard workflow:

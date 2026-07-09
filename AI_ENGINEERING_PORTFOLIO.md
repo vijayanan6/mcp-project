@@ -389,7 +389,22 @@ Claude Code changes how engineering work gets done — not by replacing engineer
 Using Claude Code throughout this project means every decision — from database choice to token optimization to security — was made with AI-assisted reasoning, then verified against the running code.
 
 ---
-                                                                                                                                                                                                                                          
+
+## Security Engineering — Supply Chain & Secret Hygiene
+
+Beyond application-level security (path traversal defense, prompt injection resistance, sandboxed `eval()`), this project's development workflow itself was hardened using practices standard on professional engineering teams:
+
+| Practice | Implementation |
+|----------|-----------------|
+| Secret-leak prevention | `gitleaks` pre-commit hook — blocks any commit containing a likely secret before it ever reaches git history; verified against the full commit history (74 commits, zero findings) |
+| Commit provenance | SSH-based commit signing — every commit cryptographically signed, independently verified via GitHub's API (`"verified": true`), not just a local display badge |
+| Dependency vulnerability scanning | `pip-audit` run against all project dependencies; found and fixed 5 real CVEs in `pip`; correctly identified one CVE in `chromadb` as inapplicable after tracing the actual code path (`PersistentClient`, embedded — not the vulnerable networked server mode) |
+| Network exposure review | OS-level firewall audit — identified and closed inbound rules unnecessarily exposed on untrusted (Public) network profiles |
+
+**Why this matters:** a dependency scanner or CVE database tells you a vulnerability exists somewhere in your dependency tree — it doesn't tell you whether *your* code exercises the vulnerable path. Treating every flagged CVE as equally urgent either causes alert fatigue (patch everything reflexively) or missed real risk (start ignoring the scanner). The discipline demonstrated here is reading the advisory and tracing the actual call path before deciding whether a finding requires action.
+
+---
+
 ## What's Next
 
 | Phase | Concept |
