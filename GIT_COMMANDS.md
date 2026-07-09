@@ -187,6 +187,26 @@ d9346db  Initial commit - MCP learning project
 
 ---
 
+## Commit Signing (Security)
+
+Every commit made on this machine is now signed with a dedicated SSH key, so
+GitHub shows a "Verified" badge next to each commit — proof it actually came
+from this machine and wasn't pushed by someone with a stolen token.
+
+```powershell
+# One-time setup (already done)
+git config --global gpg.format ssh
+git config --global user.signingkey ~/.ssh/git_signing_key.pub
+git config --global commit.gpgsign true
+```
+
+The public key was added to GitHub under Settings > SSH and GPG keys > New
+SSH key, with Key type set to **Signing Key** (not Deploy key, and not
+Authentication Key — those are different things). No extra steps needed for
+day-to-day commits; signing happens automatically.
+
+---
+
 ## Rules Learned
 
 1. **Always run `git status` before committing** — know what you are saving
