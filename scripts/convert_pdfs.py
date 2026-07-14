@@ -7,8 +7,8 @@ Requirements:
   pip install pymupdf pytesseract
   Tesseract installed at: C:/Program Files/Tesseract-OCR/
 
-Usage:
-  python convert_pdfs.py
+Usage (from the project root):
+  python scripts/convert_pdfs.py
 """
 from pathlib import Path
 
@@ -20,7 +20,7 @@ import io
 # Point pytesseract to the Tesseract executable
 pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
 
-DOCS = Path(__file__).parent / "docs"
+DOCS = Path(__file__).parent.parent / "knowledge_base"
 
 
 def pdf_to_text(pdf_path: Path) -> str:
@@ -48,7 +48,7 @@ def pdf_to_text(pdf_path: Path) -> str:
 def main():
     pdfs = sorted(DOCS.glob("*.pdf"))
     if not pdfs:
-        print("No PDF files found in docs/")
+        print("No PDF files found in knowledge_base/")
         return
 
     print(f"Found {len(pdfs)} PDF(s) to convert:\n")

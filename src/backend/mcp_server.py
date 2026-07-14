@@ -142,7 +142,7 @@ async def list_tools() -> list[types.Tool]:
         types.Tool(
             name="index_docs",
             description=(
-                "Indexes all documents in the docs/ folder into ChromaDB for semantic search. "
+                "Indexes all documents in the knowledge_base/ folder into ChromaDB for semantic search. "
                 "Call this once after adding new documents, or when the user asks to index/update docs. "
                 "Only needs to be called again when new files are added."
             ),
@@ -178,7 +178,7 @@ async def list_tools() -> list[types.Tool]:
         types.Tool(
             name="list_docs",
             description=(
-                "Lists all readable documents in the docs/ folder. "
+                "Lists all readable documents in the knowledge_base/ folder. "
                 "Call this first when the user asks a question about their documents "
                 "or files, to see what is available before reading one."
             ),
@@ -192,7 +192,7 @@ async def list_tools() -> list[types.Tool]:
         types.Tool(
             name="read_doc",
             description=(
-                "Reads the full content of a document from the docs/ folder. "
+                "Reads the full content of a document from the knowledge_base/ folder. "
                 "Use this to retrieve file contents so you can answer questions about it. "
                 "Always call list_docs first to confirm the filename."
             ),
@@ -322,7 +322,7 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
     if name == "index_docs":
         results = index_all()
         if not results:
-            return [types.TextContent(type="text", text="No supported files found in docs/. Add .txt or .md files first.")]
+            return [types.TextContent(type="text", text="No supported files found in knowledge_base/. Add .txt or .md files first.")]
         lines = "\n".join(f"  • {f}: {c} chunks" for f, c in results.items())
         stats = get_stats()
         return [types.TextContent(
@@ -356,7 +356,7 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
 
     # ── Tool: list_docs ───────────────────────────────────────────────────
     if name == "list_docs":
-        docs_dir = Path(__file__).parent / "docs"
+        docs_dir = Path(__file__).parent.parent.parent / "knowledge_base"
         docs_dir.mkdir(exist_ok=True)  # create folder if it doesn't exist yet
 
         supported = {".txt", ".md", ".csv", ".json", ".py", ".html", ".xml", ".pdf"}
@@ -365,7 +365,7 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
         if not files:
             return [types.TextContent(
                 type="text",
-                text="No documents found in the docs/ folder. Add .txt or .md files there and try again.",
+                text="No documents found in the knowledge_base/ folder. Add .txt or .md files there and try again.",
             )]
 
         listing = "\n".join(f"  • {f}" for f in files)
@@ -377,13 +377,13 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
         if not filename:
             return [types.TextContent(type="text", text="Error: 'filename' is required.")]
 
-        docs_dir = Path(__file__).parent / "docs"
+        docs_dir = Path(__file__).parent.parent.parent / "knowledge_base"
 
         # Resolve paths and block directory traversal (e.g. ../../secrets.txt)
         try:
             target = (docs_dir / filename).resolve()
             if not str(target).startswith(str(docs_dir.resolve())):
-                return [types.TextContent(type="text", text="Error: access outside docs/ folder is not allowed.")]
+                return [types.TextContent(type="text", text="Error: access outside knowledge_base/ folder is not allowed.")]
         except Exception:
             return [types.TextContent(type="text", text="Error: invalid filename.")]
 

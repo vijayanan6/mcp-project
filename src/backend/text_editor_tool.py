@@ -3,7 +3,7 @@ Text editor tool — client-side Anthropic builtin tool, locked to one file.
 
 Unlike web_search (server-side, resolved by Anthropic), the text editor tool
 sends Claude's view/create/str_replace/insert requests back to *this* process
-to execute. This implementation only ever touches docs/project_notes.md —
+to execute. This implementation only ever touches knowledge_base/project_notes.md —
 any other path is rejected before the filesystem is touched, regardless of
 what path string Claude sends.
 """
@@ -12,7 +12,7 @@ from shutil import copyfile
 
 from anthropic.lib.tools import BetaAsyncBuiltinFunctionTool, ToolError
 
-DOCS_DIR = (Path(__file__).parent / "docs").resolve()
+DOCS_DIR = (Path(__file__).parent.parent.parent / "knowledge_base").resolve()
 ALLOWED_PATH = (DOCS_DIR / "project_notes.md").resolve()
 
 

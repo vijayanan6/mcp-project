@@ -18,29 +18,30 @@ to the MCP standard works with any MCP-compatible AI.
 
 ```
 MCP Project/
-├── api.py                  — FastAPI web server (primary entry point)
-├── agent.py                — CLI agent (original learning version)
-├── mcp_server.py            — MCP server with 8 tools
-├── text_editor_tool.py      — Client-side text editor tool, locked to docs/project_notes.md
-├── database.py              — SQLite layer (notes, sessions, usage_logs, credit_config)
-├── rag.py                   — ChromaDB semantic search
-├── convert_pdfs.py          — Tesseract OCR for scanned PDFs
-├── inspect_db.py            — Utility to view SQLite contents
-├── tool_use_demo.py         — Tool Use Fundamentals demo (WARNING: consumes API credits)
-├── templates/
-│   ├── chat.html            — Browser chat UI (SSE streaming, credit alert badge)
-│   └── usage.html           — AI Cost Dashboard (tokens, cost, forecast, multi-project)
-├── docs/                    — Drop your documents here
+├── src/
+│   ├── backend/
+│   │   ├── api.py                  — FastAPI web server (primary entry point)
+│   │   ├── agent.py                — CLI agent (original learning version)
+│   │   ├── mcp_server.py            — MCP server with 8 tools
+│   │   ├── text_editor_tool.py      — Client-side text editor tool, locked to knowledge_base/project_notes.md
+│   │   ├── database.py              — SQLite layer (notes, sessions, usage_logs, credit_config)
+│   │   └── rag.py                   — ChromaDB semantic search
+│   └── frontend/
+│       ├── chat.html            — Browser chat UI (SSE streaming, credit alert badge)
+│       └── usage.html           — AI Cost Dashboard (tokens, cost, forecast, multi-project)
+├── scripts/
+│   ├── convert_pdfs.py          — Tesseract OCR for scanned PDFs
+│   ├── inspect_db.py            — Utility to view SQLite contents
+│   └── tool_use_demo.py         — Tool Use Fundamentals demo (WARNING: consumes API credits)
+├── knowledge_base/          — Drop your documents here (RAG source content)
+├── data/                    — data.db (SQLite) + chroma_db/ (ChromaDB), both gitignored
 ├── evals/
 │   ├── dataset.json         — 12 test cases for tool selection + model routing
 │   └── run_evals.py         — Eval runner (WARNING: consumes API credits)
+├── docs/                    — Project documentation (see table below)
 ├── .mcp.json                — Project-scoped MCP servers (Playwright, for UI testing)
-├── LEARNING_JOURNEY.md      — Full phase-by-phase learning record
-├── LEARNING_PLAN.md         — Roadmap to expert AI engineer
-├── ARCHITECTURE.md          — System design in plain English
-├── INSIGHTS.md              — Key lessons and principles
-├── AI_ENGINEERING_PORTFOLIO.md — Skills portfolio (LinkedIn/GitHub facing)
-├── GIT_COMMANDS.md          — Git reference used throughout the project
+├── README.md
+├── CLAUDE.md                — Instructions for Claude Code
 └── requirements.txt
 ```
 
@@ -61,15 +62,15 @@ api.py (FastAPI)
   ├──► mcp_server.py (8 MCP Tools)
   │         ├──► database.py  → SQLite (notes, sessions, usage_logs, credit_config)
   │         ├──► rag.py       → ChromaDB (semantic document search)
-  │         └──► docs/        → your documents (txt, md, PDF)
+  │         └──► knowledge_base/ → your documents (txt, md, PDF)
   │
-  ├──► text_editor_tool.py (client-side tool, in-process — locked to docs/project_notes.md)
+  ├──► text_editor_tool.py (client-side tool, in-process — locked to knowledge_base/project_notes.md)
   │
   └──► web_search (server-side tool — runs on Anthropic's infrastructure, no local code)
 ```
 
 Three processes run together: the browser, `api.py`, and `mcp_server.py` (spawned as a subprocess
-and kept alive for the life of the app). See `ARCHITECTURE.md` for the full request lifecycle.
+and kept alive for the life of the app). See `docs/ARCHITECTURE.md` for the full request lifecycle.
 
 ---
 
@@ -83,12 +84,12 @@ Three different execution models, one `tools` list:
 | `calculate` | MCP | Safe math expression evaluator |
 | `get_weather` | MCP | Mock weather data by city |
 | `manage_notes` | MCP | Persistent CRUD notes (SQLite) |
-| `list_docs` | MCP | Lists files in docs/ folder |
+| `list_docs` | MCP | Lists files in knowledge_base/ folder |
 | `read_doc` | MCP | Reads full content of a document |
 | `index_docs` | MCP | Indexes docs into ChromaDB for semantic search |
 | `search_docs` | MCP | Semantic search — finds relevant chunks for any query |
 | `web_search` | Server-side (Anthropic) | Live web search for anything time-sensitive or beyond training data. $10/1,000 searches + token cost. |
-| `str_replace_based_edit_tool` | Client-side (local) | Lets Claude view/edit exactly one file — `docs/project_notes.md` — nothing else |
+| `str_replace_based_edit_tool` | Client-side (local) | Lets Claude view/edit exactly one file — `knowledge_base/project_notes.md` — nothing else |
 
 ---
 
@@ -116,7 +117,7 @@ ANTHROPIC_API_KEY=sk-ant-...
 
 ### Run the web app
 ```powershell
-python -m uvicorn api:app --reload --port 8000
+python -m uvicorn api:app --reload --port 8000 --app-dir src/backend
 ```
 
 Open **`http://localhost:8000`** for the chat UI, or **`http://localhost:8000/usage`** for the
@@ -124,7 +125,7 @@ AI Cost Dashboard.
 
 ### Or run the CLI agent
 ```powershell
-python agent.py
+python src/backend/agent.py
 ```
 
 ---
@@ -242,8 +243,8 @@ this project's `web_search` rollout.
 
 ## How to Add Documents
 
-1. Drop `.txt`, `.md`, or `.pdf` files into the `docs/` folder
-2. For scanned PDFs: run `python convert_pdfs.py` first
+1. Drop `.txt`, `.md`, or `.pdf` files into the `knowledge_base/` folder
+2. For scanned PDFs: run `python scripts/convert_pdfs.py` first
 3. Restart the server (auto-indexes on startup) or say *"Re-index my documents"* in chat
 
 ---
@@ -252,7 +253,7 @@ this project's `web_search` rollout.
 
 ```
 Indexing (once):
-  docs/*.txt → split into ~500 char chunks → embed with all-MiniLM-L6-v2 → store in ChromaDB
+  knowledge_base/*.txt → split into ~500 char chunks → embed with all-MiniLM-L6-v2 → store in ChromaDB
 
 Querying (every question):
   question → embed → ChromaDB similarity search → top 4 relevant chunks → Claude
@@ -309,16 +310,18 @@ download, and `api.py`'s lifespan clears `SSLKEYLOGFILE` and passes an explicit 
 
 ## Documentation
 
+`README.md` and `CLAUDE.md` stay at the project root; the rest live in `docs/`:
+
 | File | Purpose |
 |---|---|
-| `CLAUDE.md` | Instructions for Claude Code — commands, architecture, standards |
-| `ARCHITECTURE.md` | System design in plain English |
-| `LEARNING_JOURNEY.md` | Phase-by-phase build record |
-| `LEARNING_PLAN.md` | Roadmap to expert AI engineer |
-| `INSIGHTS.md` | Key lessons and principles |
-| `TUTORIAL.md` | Beginner teaching guide with exercises |
-| `GIT_COMMANDS.md` | All Git commands used, with explanations |
-| `AI_ENGINEERING_PORTFOLIO.md` | Skills portfolio for hiring managers |
+| `CLAUDE.md` (root) | Instructions for Claude Code — commands, architecture, standards |
+| `docs/ARCHITECTURE.md` | System design in plain English |
+| `docs/LEARNING_JOURNEY.md` | Phase-by-phase build record |
+| `docs/LEARNING_PLAN.md` | Roadmap to expert AI engineer |
+| `docs/INSIGHTS.md` | Key lessons and principles |
+| `docs/TUTORIAL.md` | Beginner teaching guide with exercises |
+| `docs/GIT_COMMANDS.md` | All Git commands used, with explanations |
+| `docs/AI_ENGINEERING_PORTFOLIO.md` | Skills portfolio for hiring managers |
 
 ---
 

@@ -14,8 +14,9 @@ import sqlite3
 from datetime import datetime
 from pathlib import Path
 
-# Database file lives in the project root
-DB_PATH = Path(__file__).parent / "data.db"
+# Database file lives in data/ at the project root (src/backend/database.py -> up 3 levels)
+DB_PATH = Path(__file__).parent.parent.parent / "data" / "data.db"
+DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 
 
 def get_connection() -> sqlite3.Connection:

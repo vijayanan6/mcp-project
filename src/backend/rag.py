@@ -44,8 +44,8 @@ httpx.AsyncClient.__init__ = _patched_async   # type: ignore[method-assign]
 import chromadb
 from chromadb.utils import embedding_functions
 
-DOCS_DIR   = Path(__file__).parent / "docs"
-CHROMA_DIR = Path(__file__).parent / "chroma_db"
+DOCS_DIR   = Path(__file__).parent.parent.parent / "knowledge_base"
+CHROMA_DIR = Path(__file__).parent.parent.parent / "data" / "chroma_db"
 
 CHUNK_SIZE    = 500   # characters per chunk
 CHUNK_OVERLAP = 100   # overlap between chunks (preserves context at boundaries)
@@ -104,7 +104,7 @@ def index_document(filename: str) -> int:
     """
     file_path = DOCS_DIR / filename
     if not file_path.exists():
-        raise FileNotFoundError(f"'{filename}' not found in docs/")
+        raise FileNotFoundError(f"'{filename}' not found in knowledge_base/")
 
     text = file_path.read_text(encoding="utf-8")
     chunks = _chunk_text(text)
@@ -128,7 +128,7 @@ def index_document(filename: str) -> int:
 
 def index_all() -> dict[str, int]:
     """
-    Index every supported file in docs/.
+    Index every supported file in knowledge_base/.
     Returns { filename: chunk_count } for each file processed.
     """
     DOCS_DIR.mkdir(exist_ok=True)

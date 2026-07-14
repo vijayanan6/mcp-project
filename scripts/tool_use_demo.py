@@ -10,11 +10,12 @@ tool_runner's abstraction in the way.
 Makes ~6 short calls to claude-sonnet-4-6 (small max_tokens each) — a few
 cents of API credit total.
 
-Run: python tool_use_demo.py
+Run (from the project root): python scripts/tool_use_demo.py
 """
 import json
 import os
 import sys
+from pathlib import Path
 
 if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -26,6 +27,7 @@ import httpx
 os.environ.pop("SSLKEYLOGFILE", None)  # Windows corporate cert/monitoring driver fix — see CLAUDE.md
 from anthropic import Anthropic
 
+sys.path.insert(0, str(Path(__file__).parent.parent / "src" / "backend"))
 from database import init_db, note_save, note_get
 
 client = Anthropic(http_client=httpx.Client(verify=False))

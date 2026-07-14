@@ -14,9 +14,9 @@ build/
 *.key
 
 # Sensitive documents — never commit personal files
-docs/*.pdf
-docs/*.txt
-docs/*.docx
+knowledge_base/*.pdf
+knowledge_base/*.txt
+knowledge_base/*.docx
 
 # Virtual environments
 venv/
@@ -29,17 +29,17 @@ env/
 *.suo
 
 # Database (local only — not committed)
-data.db
+data/data.db
 
 # ChromaDB vector database (local only)
-chroma_db/
+data/chroma_db/
 
 # OS
 .DS_Store
 Thumbs.db
 
 # LinkedIn drafts — personal, not project code
-LINKEDIN_POSTS.md
+docs/LINKEDIN_POSTS.md
 
 # Logs
 *.log

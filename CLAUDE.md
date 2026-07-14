@@ -2,31 +2,50 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Folder Structure
+
+```
+MCP Project/
+├── src/
+│   ├── backend/          # app code — api.py, agent.py, mcp_server.py, database.py, rag.py, text_editor_tool.py
+│   └── frontend/         # chat.html, usage.html served by api.py
+├── scripts/              # standalone utilities — convert_pdfs.py, inspect_db.py, tool_use_demo.py
+├── knowledge_base/       # RAG source documents Claude searches (was docs/ before the Phase 22 reorg)
+├── docs/                 # project markdown documentation (this file and README.md stay at root)
+├── data/                 # data.db (SQLite) and chroma_db/ (ChromaDB) — both gitignored, auto-created
+└── evals/                # eval dataset + runner
+```
+
+Cross-module imports inside `src/backend/` stay flat (e.g. `from database import ...` in `api.py`) rather
+than becoming a real installable package — `uvicorn`/scripts add `src/backend/` to `sys.path` via
+`--app-dir` or an explicit `sys.path.insert` instead. See the "Commands" run lines below for the exact
+invocations this requires.
+
 ## Commands
 
 ```powershell
 # Install all dependencies
 pip install anthropic[mcp] mcp pymupdf pytesseract pypdf fastapi "uvicorn[standard]" chromadb sentence-transformers python-dotenv httpx
 
-# Run the web app (primary entry point)
-python -m uvicorn api:app --reload --port 8000
+# Run the web app (primary entry point) — from the project root
+python -m uvicorn api:app --reload --port 8000 --app-dir src/backend
 # Open: http://localhost:8000
 
-# Run the CLI agent (original learning version)
-python agent.py
+# Run the CLI agent (original learning version) — from the project root
+python src/backend/agent.py
 
 # Run eval pipeline (WARNING: consumes API credits — 1 Claude API call per test case)
 # Start the app first, then in a second terminal:
 python evals/run_evals.py
 
-# Convert scanned PDFs in docs/ to .txt using Tesseract OCR
-python convert_pdfs.py
+# Convert scanned PDFs in knowledge_base/ to .txt using Tesseract OCR
+python scripts/convert_pdfs.py
 
 # Inspect SQLite database contents
-python inspect_db.py
+python scripts/inspect_db.py
 
 # Tool Use Fundamentals demo (WARNING: consumes API credits — ~6 short Claude API calls)
-python tool_use_demo.py
+python scripts/tool_use_demo.py
 ```
 
 Tesseract must be installed at `C:\Program Files\Tesseract-OCR\` for `convert_pdfs.py` to work.
@@ -35,13 +54,13 @@ Tesseract must be installed at `C:\Program Files\Tesseract-OCR\` for `convert_pd
 
 Three processes when the web app runs:
 
-**`api.py`** — FastAPI web server. Spawns `mcp_server.py` on startup via lifespan, keeps it alive across all requests. Handles HTTP routes, SSE streaming, session management. Auto-indexes docs into ChromaDB on startup. Stores sessions in SQLite. Also declares two non-MCP Anthropic tools directly in `app.state.tools` — see "Non-MCP Tools" below.
+**`src/backend/api.py`** — FastAPI web server. Spawns `src/backend/mcp_server.py` on startup via lifespan, keeps it alive across all requests. Handles HTTP routes, SSE streaming, session management. Auto-indexes `knowledge_base/` into ChromaDB on startup. Stores sessions in SQLite. Also declares two non-MCP Anthropic tools directly in `app.state.tools` — see "Non-MCP Tools" below.
 
-**`mcp_server.py`** — MCP server with 8 tools. No knowledge of Claude or HTTP. Notes stored in SQLite via `database.py`. Document search via `rag.py` + ChromaDB.
+**`src/backend/mcp_server.py`** — MCP server with 8 tools. No knowledge of Claude or HTTP. Notes stored in SQLite via `database.py`. Document search via `rag.py` + ChromaDB.
 
-**`text_editor_tool.py`** — `ProjectNotesEditorTool`, a client-side Anthropic builtin tool (`BetaAsyncBuiltinFunctionTool`) executed in-process by `api.py`, not via MCP.
+**`src/backend/text_editor_tool.py`** — `ProjectNotesEditorTool`, a client-side Anthropic builtin tool (`BetaAsyncBuiltinFunctionTool`) executed in-process by `api.py`, not via MCP.
 
-**`agent.py`** — Original CLI version. Same MCP connection logic as `api.py` but uses `input()` instead of HTTP.
+**`src/backend/agent.py`** — Original CLI version. Same MCP connection logic as `api.py` but uses `input()` instead of HTTP.
 
 ```
 Browser ──HTTP/SSE──► api.py ──stdio/JSON-RPC──► mcp_server.py (8 tools)
@@ -62,12 +81,12 @@ Three different execution models share one `tools` list passed to Claude — don
 | `calculate` | MCP | `eval()` with restricted namespace — only math functions allowed |
 | `get_weather` | MCP | Mock data dict — replace with real API for production |
 | `manage_notes` | MCP | SQLite-backed — persists across restarts via `database.py` |
-| `list_docs` | MCP | Reads `docs/` folder; supports `.txt .md .csv .json .py .html .xml .pdf` |
+| `list_docs` | MCP | Reads `knowledge_base/` folder; supports `.txt .md .csv .json .py .html .xml .pdf` |
 | `read_doc` | MCP | Path traversal blocked; 8000-char cap; PDF via `pypdf` or `pymupdf+Tesseract` |
 | `index_docs` | MCP | Chunks all docs → embeds with `all-MiniLM-L6-v2` → stores in ChromaDB |
 | `search_docs` | MCP | Semantic search via ChromaDB; returns top N chunks with relevance scores |
 | `web_search` | **Server-side** | Anthropic-hosted, no local code executes it. `max_uses: 3` caps searches/turn. `allowed_callers: ["direct"]` is required — the `web_search_20260209` default (`["code_execution_20260120"]`, for dynamic filtering) 400s on Haiku, which `_pick_model()` can route to and which doesn't support programmatic tool calling. |
-| `str_replace_based_edit_tool` | **Client-side** | `ProjectNotesEditorTool` in `text_editor_tool.py`. Hardcoded to `docs/project_notes.md` only — every path Claude sends is resolved and compared against that exact file; anything else (other `docs/` files, `../` traversal, absolute paths) raises `ToolError` before touching disk. |
+| `str_replace_based_edit_tool` | **Client-side** | `ProjectNotesEditorTool` in `text_editor_tool.py`. Hardcoded to `knowledge_base/project_notes.md` only — every path Claude sends is resolved and compared against that exact file; anything else (other `knowledge_base/` files, `../` traversal, absolute paths) raises `ToolError` before touching disk. |
 
 ## Adding a New Tool
 
@@ -131,10 +150,10 @@ This dashboard supports multiple projects reporting to a single SQLite database.
 
 **To add a second project:**
 
-1. Copy `database.py` into the new project (or import it as a shared module)
+1. Copy `src/backend/database.py` into the new project (or import it as a shared module)
 2. Point `DB_PATH` to the same `data.db` file used by this project:
    ```python
-   DB_PATH = Path("c:/Users/vijay/OneDrive/Desktop/Claude Workspace/MCP Project/data.db")
+   DB_PATH = Path("c:/Users/vijay/OneDrive/Desktop/Claude Workspace/MCP Project/data/data.db")
    ```
 3. In the new project's streaming endpoint, pass the project name to `usage_log()`:
    ```python
@@ -149,13 +168,13 @@ This dashboard supports multiple projects reporting to a single SQLite database.
 
 ## Persistence
 
-- **SQLite** (`data.db`) — notes, sessions, usage_logs, credit_config tables. Managed by `database.py`. Auto-created on startup.
-- **ChromaDB** (`chroma_db/`) — vector embeddings for semantic doc search. Managed by `rag.py`. Auto-indexed on `api.py` startup.
-- Both `data.db` and `chroma_db/` are in `.gitignore` — local only.
+- **SQLite** (`data/data.db`) — notes, sessions, usage_logs, credit_config tables. Managed by `database.py`. Auto-created on startup.
+- **ChromaDB** (`data/chroma_db/`) — vector embeddings for semantic doc search. Managed by `rag.py`. Auto-indexed on `api.py` startup.
+- Both `data/data.db` and `data/chroma_db/` are in `.gitignore` — local only.
 
-## docs/ Folder
+## knowledge_base/ Folder
 
-Place `.txt`, `.md`, or `.pdf` files here. Scanned PDFs must be pre-converted via `convert_pdfs.py` (Tesseract OCR). Text-based PDFs are read directly via `pypdf`. All docs are auto-indexed into ChromaDB on `api.py` startup. Re-index after adding new files by saying "Re-index my documents" in chat or restarting the server.
+Place `.txt`, `.md`, or `.pdf` files here (renamed from `docs/` in the Phase 22 reorg — `docs/` is now project markdown documentation instead). Scanned PDFs must be pre-converted via `scripts/convert_pdfs.py` (Tesseract OCR). Text-based PDFs are read directly via `pypdf`. All files here are auto-indexed into ChromaDB on `api.py` startup. Re-index after adding new files by saying "Re-index my documents" in chat or restarting the server.
 
 ## System Prompt Behaviour
 
@@ -260,15 +279,20 @@ Run after every system prompt change or model routing change to catch regression
 
 ## Documentation Files
 
+`README.md` and `CLAUDE.md` stay at the project root by convention; the rest live in `docs/`:
+
 | File | Purpose |
 |---|---|
-| `README.md` | Project overview and setup |
-| `ARCHITECTURE.md` | System design in plain English |
-| `LEARNING_JOURNEY.md` | Phase-by-phase build record |
-| `INSIGHTS.md` | Key lessons and principles |
-| `TUTORIAL.md` | Beginner teaching guide with exercises |
-| `GIT_COMMANDS.md` | All Git commands used with explanations |
-| `AI_ENGINEERING_PORTFOLIO.md` | LinkedIn/GitHub portfolio of skills |
+| `README.md` (root) | Project overview and setup |
+| `docs/ARCHITECTURE.md` | System design in plain English |
+| `docs/LEARNING_JOURNEY.md` | Phase-by-phase build record |
+| `docs/INSIGHTS.md` | Key lessons and principles |
+| `docs/TUTORIAL.md` | Beginner teaching guide with exercises |
+| `docs/GIT_COMMANDS.md` | All Git commands used with explanations |
+| `docs/AI_ENGINEERING_PORTFOLIO.md` | LinkedIn/GitHub portfolio of skills |
+| `docs/LEARNING_PLAN.md` | Forward-looking curriculum/roadmap |
+| `docs/AI_ENGINEERING_TEACHING_ASSISTANT.md` | Teaching-assistant plugin design doc |
+| `docs/LINKEDIN_POSTS.md` | LinkedIn drafts — gitignored, personal |
 
 ## Key Dependencies
 

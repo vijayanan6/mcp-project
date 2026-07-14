@@ -10,8 +10,9 @@ Key FastAPI concepts used here:
   - StreamingResponse: Server-Sent Events for real-time streaming
   - app.state: share objects (tools, client) across all requests
 
-Run:
-  uvicorn api:app --reload
+Run (from the project root — --app-dir puts src/backend/ on sys.path so this
+file's plain `from database import ...`-style internal imports keep resolving):
+  uvicorn api:app --reload --port 8000 --app-dir src/backend
   Then open http://localhost:8000
 """
 import json
@@ -88,7 +89,7 @@ async def lifespan(app: FastAPI):
             }
 
             # Client-side tool — executed by ProjectNotesEditorTool, not Anthropic.
-            # Hardcoded to only ever touch docs/project_notes.md (see text_editor_tool.py).
+            # Hardcoded to only ever touch knowledge_base/project_notes.md (see text_editor_tool.py).
             notes_editor_tool = ProjectNotesEditorTool()
 
             tools = tools + [web_search_tool, notes_editor_tool]
@@ -140,7 +141,7 @@ class ChatRequest(BaseModel):
 @app.get("/", response_class=HTMLResponse)
 async def home():
     """Serve the chat UI."""
-    html = Path(__file__).parent / "templates" / "chat.html"
+    html = Path(__file__).parent.parent / "frontend" / "chat.html"
     return HTMLResponse(html.read_text(encoding="utf-8"))
 
 
@@ -167,7 +168,7 @@ async def clear_session(session_id: str):
 @app.get("/usage", response_class=HTMLResponse)
 async def usage_dashboard():
     """Serve the cost dashboard UI."""
-    html = Path(__file__).parent / "templates" / "usage.html"
+    html = Path(__file__).parent.parent / "frontend" / "usage.html"
     return HTMLResponse(html.read_text(encoding="utf-8"))
 
 
@@ -217,7 +218,7 @@ SYSTEM_PROMPT = [
             "directly without searching. "
             "If documents are not yet indexed, call index_docs first.\n\n"
             "The str_replace_based_edit_tool (text editor) can ONLY view or edit "
-            "docs/project_notes.md — no other file. Use it when the user asks you to update, "
+            "knowledge_base/project_notes.md — no other file. Use it when the user asks you to update, "
             "add to, fix, or rewrite project_notes.md (e.g. after adding a new tool or feature). "
             "Always view the file first if you haven't already seen its current content this "
             "conversation, so str_replace has accurate context to match against. Do not use this "

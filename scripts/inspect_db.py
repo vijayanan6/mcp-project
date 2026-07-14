@@ -2,10 +2,12 @@ import sqlite3
 import json
 from pathlib import Path
 
-if not Path("data.db").exists():
+DB_PATH = Path(__file__).parent.parent / "data" / "data.db"
+
+if not DB_PATH.exists():
     print("data.db does not exist yet — run the app first to create it.")
 else:
-    conn = sqlite3.connect("data.db")
+    conn = sqlite3.connect(DB_PATH)
 
     print("=== NOTES TABLE ===")
     print("Columns: title | content | created_at\n")

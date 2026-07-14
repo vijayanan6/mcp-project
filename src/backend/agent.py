@@ -13,8 +13,8 @@ SETUP:
   set ANTHROPIC_API_KEY=your-key-here   (Windows)
   export ANTHROPIC_API_KEY=your-key     (macOS / Linux)
 
-RUN:
-  python agent.py
+RUN (from the project root):
+  python src/backend/agent.py
 """
 import asyncio
 import os
