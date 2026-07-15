@@ -346,6 +346,35 @@ async def _maybe_send_low_credit_alert() -> None:
 
 ---
 
+### 15. Multimodal Chat Input — Ephemeral Image/PDF Attachments with Citations
+
+Extended the chat beyond text-only input: users can attach one image or PDF per message, read directly via Claude's native vision/document understanding — no OCR pipeline, no indexing step, for ad-hoc content brought into a live conversation rather than the curated `knowledge_base/` corpus.
+
+```python
+def _build_api_messages(windowed: list, attachment, current_text: str) -> list:
+    """Multimodal content exists ONLY here — for this one API call.
+    `history` (what gets persisted to SQLite) never sees it."""
+    if attachment is None:
+        return windowed
+    content = [_attachment_content_block(attachment)]  # image or document block
+    if current_text:
+        content.append({"type": "text", "text": current_text})
+    api_messages = list(windowed)          # never mutate the caller's list
+    api_messages[-1] = {"role": "user", "content": content}
+    return api_messages
+```
+
+**Built and verified, with real files and real API responses — not just UI clicks:**
+- **Ephemeral design, confirmed by inspecting raw storage, not by trusting the code's intent** — the multimodal content block is built in a throwaway list used for exactly one `tool_runner` call; `history` only ever receives plain text via a small `_history_text_for()` helper. Verified by querying the SQLite row directly after a real attachment turn: every stored message was a plain string, never base64
+- **PDF citations, with a bug caught by testing against the raw API, not the full app stack** — enabled `citations: {enabled: true}` on PDF content blocks so responses cite the exact page they drew from. First implementation silently produced zero citations; a standalone script calling the Anthropic API directly and printing the real response object revealed the citation object's fields are flat (`start_page_number` alongside a `type: "page_location"` discriminator), not nested the way the field name suggested — the original `getattr` chain was checking an attribute that never existed
+- **Distinguished "reads as a PDF" from "has a text layer a citation engine can address"** — a test PDF built by saving a rendered image (no embedded text) was read correctly via vision but produced no citations, which looked like the same bug again until a PDF with real embedded text worked immediately — a distinction the file format alone doesn't reveal
+- **Closed a silent-failure gap in the frontend before it could ship** — a rejected/oversized attachment returns a plain JSON `400`, not an SSE stream; the existing SSE parser would have silently swallowed it (no `data:`-prefixed line to match). Added an explicit `!res.ok` check ahead of the parsing loop as part of the same change, not as a follow-up bug fix
+- **No new cost-tracking code required, confirmed empirically** — image/PDF content bills as ordinary input tokens; a PDF-attached turn showed 2814 input tokens vs. 1002 for a same-session plain-text follow-up, and the existing cost dashboard picked up the difference with zero new wiring
+
+**Why this matters:** the highest-value bug here wasn't visible in the UI at all — a wrong `getattr` chain returned `None` silently, with no traceback, no error, just a feature that quietly did nothing. Catching it required stepping outside the running app to call the raw API directly and print the actual object, rather than debugging through the full request/response cycle. The same discipline — verify the real shape of a dependency's response before writing extraction code against an assumed one — generalizes past this one feature.
+
+---
+
 ## Key Engineering Decisions
 
 | Decision | Why |
