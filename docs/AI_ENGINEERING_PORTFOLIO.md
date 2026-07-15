@@ -15,7 +15,7 @@ Browser ──HTTP/SSE──► FastAPI (api.py) ──stdio/JSON-RPC──► M
                            └──► Anthropic API (Claude)      SQLite + ChromaDB
 ```
 
-**Portfolio:** [github.com/vijayanan6/mcp-project/blob/main/AI_ENGINEERING_PORTFOLIO.md](https://github.com/vijayanan6/mcp-project/blob/main/AI_ENGINEERING_PORTFOLIO.md)
+**Portfolio:** [github.com/vijayanan6/mcp-project/blob/main/docs/AI_ENGINEERING_PORTFOLIO.md](https://github.com/vijayanan6/mcp-project/blob/main/docs/AI_ENGINEERING_PORTFOLIO.md)
 
 ---
 
@@ -314,7 +314,7 @@ class ProjectNotesEditorTool(BetaAsyncBuiltinFunctionTool):
 
 **Built and verified, with real browser tests (Playwright MCP) and direct API inspection:**
 - **Server-side vs. client-side tool architecture** — `web_search` needed only a dict declaration (Anthropic resolves it entirely); the text editor tool required implementing `BetaAsyncBuiltinFunctionTool` (`to_dict()` + `call()`) because Claude only *requests* the edit, this process has to execute it
-- **Path-confined tool execution** — the text editor tool is hard-restricted to exactly one file (`docs/project_notes.md`), not the whole `docs/` folder; every path is resolved and compared for exact equality before any file operation runs, verified against both `../` traversal and same-folder sibling-file escape attempts
+- **Path-confined tool execution** — the text editor tool is hard-restricted to exactly one file (`knowledge_base/project_notes.md`), not the whole `knowledge_base/` folder; every path is resolved and compared for exact equality before any file operation runs, verified against both `../` traversal and same-folder sibling-file escape attempts
 - **Found and fixed a silent cost-tracking gap** — server-side tool calls arrive as `server_tool_use` content blocks, a different type than the `tool_use` blocks the cost-tracking code checked for; `web_search` calls were billed correctly but invisible in the "Cost by Tool" dashboard view until this was found by directly querying `/usage/data`, not by trusting that the feature "looked like it worked"
 - **Found and fixed a real production bug via model-routing interaction** — `web_search`'s default configuration requires programmatic tool calling, which this project's Haiku tier (used by the cost-based model router) doesn't support; the Anthropic API validates *every declared tool* against model capability at request time, so unrelated Haiku-routed messages started 400ing purely from `web_search` being present in the tool list — fixed with `allowed_callers: ["direct"]`, caught by re-testing the exact failing request end-to-end after the fix, not just reasoning that it should work
 
@@ -451,7 +451,7 @@ Beyond application-level security (path traversal defense, prompt injection resi
 
 | Practice | Implementation |
 |----------|-----------------|
-| Secret-leak prevention | `gitleaks` pre-commit hook — blocks any commit containing a likely secret before it ever reaches git history; verified against the full commit history (74 commits, zero findings) |
+| Secret-leak prevention | `gitleaks` pre-commit hook — blocks any commit containing a likely secret before it ever reaches git history; re-verified against the full commit history (86 commits as of this writing, zero findings) |
 | Commit provenance | SSH-based commit signing — every commit cryptographically signed, independently verified via GitHub's API (`"verified": true`), not just a local display badge |
 | Dependency vulnerability scanning | `pip-audit` run against all project dependencies; found and fixed 5 real CVEs in `pip`; correctly identified one CVE in `chromadb` as inapplicable after tracing the actual code path (`PersistentClient`, embedded — not the vulnerable networked server mode) |
 | Network exposure review | OS-level firewall audit — identified and closed inbound rules unnecessarily exposed on untrusted (Public) network profiles |
