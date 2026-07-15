@@ -375,6 +375,32 @@ def _build_api_messages(windowed: list, attachment, current_text: str) -> list:
 
 ---
 
+### 16. The Full MCP Protocol Surface — Resources and Prompts, Not Just Tools
+
+Most MCP integrations stop at tools. Extended this project's MCP server to expose all three primitives the protocol actually defines, verifying each design decision against the real SDK and real project data rather than the textbook example.
+
+```python
+@app.list_resources()
+async def list_resources() -> list[types.Resource]:
+    """Built fresh on every call so note:// entries always reflect current state."""
+    resources = [types.Resource(uri=AnyUrl("knowledgebase://files"), ...)]
+    for title in note_list():  # notes are keyed by title, not a numeric ID
+        resources.append(types.Resource(
+            uri=AnyUrl(f"note://{urllib.parse.quote(title, safe='')}"), ...
+        ))
+    return resources
+```
+
+**Built and verified against the real SDK, not the concept:**
+- **Read the installed SDK's source before writing a single decorator** — inspected `mcp/server/lowlevel/server.py` directly to confirm the exact signatures for `list_resources`/`read_resource`/`list_prompts`/`get_prompt`, and `types.Resource.model_fields` for the real constructor fields, rather than assuming from documentation or the concept alone
+- **Caught an RFC violation before it ever reached the server** — the natural resource URI, `knowledge_base://files`, silently looked correct in code but fails `pydantic.AnyUrl` validation: RFC 3986 disallows underscores in URI scheme names. Verified with a two-line test script before touching the real handler; renamed to `knowledgebase://`
+- **Adapted a generic example to this project's actual schema, not copied it literally** — the natural tutorial-style resource URI is `note://1`, implying numeric IDs; this project's notes are keyed by `title` (a `TEXT PRIMARY KEY`). Verified via a live test that `urllib.parse.quote`/`unquote` round-trips correctly through `pydantic.AnyUrl` for titles containing spaces, mixed case, and slashes, before building the real `note://<title>` resource
+- **Verified end-to-end against a tool whose own auth blocked the obvious path** — MCP Inspector requires a session token printed to its launching terminal, which blocked scripted verification. Rather than fight the browser auth flow, wrote a standalone script using `mcp.ClientSession` — the same client class this project's own `api.py` uses — to call `list_resources`/`read_resource`/`list_prompts`/`get_prompt` directly, confirming correctness with the identical protocol calls Inspector's UI makes
+
+**Why this matters:** two of the three bugs here were "obviously correct" code that failed at a boundary the code itself never suggested existed — a valid-looking URI string, a plausible-looking ID scheme. Both were caught by testing the exact assumption against the real validator or the real database schema before writing the surrounding logic, not by staring at the code harder.
+
+---
+
 ## Key Engineering Decisions
 
 | Decision | Why |
