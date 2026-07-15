@@ -29,9 +29,9 @@ Last updated: July 2026
 - [x] Tool use fundamentals — `tool_choice` modes, forced tool calls, streaming tool_use blocks (beneath `tool_runner`)
 - [x] Anthropic-native tools beyond MCP — server-side (`web_search`, no local execution) vs. client-side (`BetaAsyncBuiltinFunctionTool`, local execution) vs. MCP; found and fixed a real multi-model tool-capability bug in production
 - [x] Multi-channel alerting with stateful cooldowns — Discord webhook alerts, tested at the state *transitions* (not just each state), designed around actual runtime guarantees instead of the textbook scheduler pattern
+- [x] MCP Inspector — launched via `npx @modelcontextprotocol/inspector python src/backend/mcp_server.py`, connected past the proxy auth-token prompt, tested at least one tool directly against the running server, no Claude API call needed
 
 ### Not Yet Started ❌
-- [ ] MCP Inspector — visual debugger for MCP servers (test tools without a full client)
 - [ ] pytest — testing framework for MCP tools and FastAPI routes
 - [ ] MCP resources & prompts — the two MCP primitives beyond tools
 - [ ] Docker
