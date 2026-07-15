@@ -170,57 +170,7 @@ async def list_resources() -> list[types.Resource]:
 
 ---
 
-### 6. Mobile Alerting — Designing for Real Runtime Constraints, Not the Textbook Pattern
-
-Extended the cost dashboard's passive in-browser alert badge into four real-time Discord push notifications — two-tier low-balance (warning/critical), a spend-spike detector, a per-tool budget cap, and a daily digest — landing on a phone instead of requiring the dashboard tab to be open.
-
-```python
-async def _maybe_send_low_credit_alert() -> None:
-    # Two independent cooldowns, each auto-clearing on recovery — critical
-    # supersedes warning so a single drop never double-alerts
-    if remaining <= alert_threshold:
-        if cfg.get("last_warning_sent_at"):
-            clear_warning_cooldown()  # bug found via transition testing, not per-tier testing
-        ...
-```
-
-**Built and verified, with a real Discord webhook and live production data (no staging environment):**
-- **Rejected the "obvious" architecture after checking a runtime assumption** — a background scheduler firing at a fixed time (the standard way to build a "daily digest") silently assumes the process is always running, which this app isn't (`uvicorn --reload`, started manually). Redesigned the trigger to piggyback on real traffic instead: compare today's date to the last-sent date on every request, no new dependency, no missed days
-- **Found a stateful bug that per-tier testing couldn't catch** — testing "does warning fire" and "does critical fire" both passed, but the transition of dropping straight from normal into critical (skipping the warning zone) left the warning tier's cooldown stale, which would have silently suppressed a legitimate re-warn on a later partial recovery. Caught only by testing the actual transition sequence, then fixed and re-verified
-- **Handled a live secret end-to-end safely** — when a real Discord webhook URL arrived directly in the conversation, verified `.gitignore` coverage structurally (`git check-ignore`) and confirmed the write with `grep -c` rather than ever printing the value back
-- **Test discipline against production data with no staging copy** — every alert path (2 balance tiers, spike, per-tool budget, digest) was tested by capturing exact current state, temporarily perturbing only what was needed to force each condition, verifying the effect via direct query, then restoring the original values exactly — zero corruption to real credit tracking across all four test runs
-
-**Why this matters:** the highest-value bug here wasn't a syntax error or a missing null check — it was a design assumption (always-on process) that would have shipped invisibly broken, and a state-transition gap that per-state testing structurally cannot find. Both required stepping back from "does this feature work" to "does this feature's design match the environment it actually runs in."
-
----
-
-### 7. Tool Use Internals — Beyond the SDK Abstraction
-
-This project's tool-calling (see the MCP section above) runs on the Anthropic SDK's `tool_runner` helper. To understand what it actually automates, built the same mechanics by hand against this project's own `get_weather` and `manage_notes` tool schemas — no `tool_runner`, no MCP — in a standalone script (`tool_use_demo.py`).
-
-```python
-# Forcing a specific tool call — bypasses "auto" and any prompt-wording persuasion
-resp = client.messages.create(
-    model=MODEL, tools=[GET_WEATHER_TOOL],
-    tool_choice={"type": "tool", "name": "get_weather"},
-    messages=[{"role": "user", "content": "Tell me a fact about deserts"}],
-)
-# stop_reason is guaranteed "tool_use" — Claude still infers a best-guess
-# argument (city: "Sahara") rather than refusing, even though the prompt
-# never asked about weather
-```
-
-**Demonstrated, with real API calls and verified results:**
-- **`tool_choice` modes** — `auto` (Claude answered the desert question directly, no tool call) vs. forced `{"type": "tool", "name": "get_weather"}` (same prompt, tool call mandatory) — proved forcing constrains the *action*, not the model's judgment about arguments
-- **`disable_parallel_tool_use`** — a two-tool-inviting prompt produced 2 parallel `tool_use` blocks under `tool_choice: any`; adding `disable_parallel_tool_use: True` collapsed it to exactly 1
-- **Streaming tool arguments** — watched `input_json_delta` events arrive as raw, unparseable JSON fragments (`'{"cit'` → `'{"city": "'` → `'{"city": "Seattle"}'`), only valid once the content block closed — the layer `tool_runner` hides (its Python implementation returns complete messages, not token-level deltas)
-- **Manual multi-turn loop** — built the `tool_use` → execute → `tool_result` → loop cycle from scratch (save a note, read it back, 3 turns total), matching `tool_use_id` by hand and verifying the SQLite write actually persisted via `inspect_db.py` — not just trusting the model's summary
-
-**Why this matters:** every production framework (`tool_runner`, LangChain agents, LlamaIndex) is a convenience layer over these exact primitives. Understanding the raw request/response cycle means being able to debug or reimplement tool-calling behavior when the abstraction doesn't fit — e.g. adding human-in-the-loop approval before a tool executes, which requires the manual loop, not `tool_runner`.
-
----
-
-### 8. AI Cost Dashboard & Credit Tracking
+### 6. AI Cost Dashboard & Credit Tracking
 
 Built a full observability layer for LLM API spend — the same class of tooling used in enterprise AI platforms to control costs.
 
@@ -301,6 +251,56 @@ System prompt cached after message 1 → near-free on every subsequent turn
 ```
 
 **Key engineering decision:** cost is estimated from token counts × pricing table — no extra API call. Schema migration handled safely with `ALTER TABLE ... ADD COLUMN` + try/except. A stale pricing entry (old Haiku 3.5 rates left in place after migrating to Haiku 4.5) was later found by comparing the dashboard's live balance against the real console.anthropic.com figure — fixed, all affected historical rows backfilled, and the silent fallback that let it hide replaced with a warning for any future unpriced model.
+
+---
+
+### 7. Mobile Alerting — Designing for Real Runtime Constraints, Not the Textbook Pattern
+
+Directly extends the cost dashboard above: turned its passive in-browser alert badge into four real-time Discord push notifications — two-tier low-balance (warning/critical), a spend-spike detector, a per-tool budget cap, and a daily digest — landing on a phone instead of requiring the dashboard tab to be open.
+
+```python
+async def _maybe_send_low_credit_alert() -> None:
+    # Two independent cooldowns, each auto-clearing on recovery — critical
+    # supersedes warning so a single drop never double-alerts
+    if remaining <= alert_threshold:
+        if cfg.get("last_warning_sent_at"):
+            clear_warning_cooldown()  # bug found via transition testing, not per-tier testing
+        ...
+```
+
+**Built and verified, with a real Discord webhook and live production data (no staging environment):**
+- **Rejected the "obvious" architecture after checking a runtime assumption** — a background scheduler firing at a fixed time (the standard way to build a "daily digest") silently assumes the process is always running, which this app isn't (`uvicorn --reload`, started manually). Redesigned the trigger to piggyback on real traffic instead: compare today's date to the last-sent date on every request, no new dependency, no missed days
+- **Found a stateful bug that per-tier testing couldn't catch** — testing "does warning fire" and "does critical fire" both passed, but the transition of dropping straight from normal into critical (skipping the warning zone) left the warning tier's cooldown stale, which would have silently suppressed a legitimate re-warn on a later partial recovery. Caught only by testing the actual transition sequence, then fixed and re-verified
+- **Handled a live secret end-to-end safely** — when a real Discord webhook URL arrived directly in the conversation, verified `.gitignore` coverage structurally (`git check-ignore`) and confirmed the write with `grep -c` rather than ever printing the value back
+- **Test discipline against production data with no staging copy** — every alert path (2 balance tiers, spike, per-tool budget, digest) was tested by capturing exact current state, temporarily perturbing only what was needed to force each condition, verifying the effect via direct query, then restoring the original values exactly — zero corruption to real credit tracking across all four test runs
+
+**Why this matters:** the highest-value bug here wasn't a syntax error or a missing null check — it was a design assumption (always-on process) that would have shipped invisibly broken, and a state-transition gap that per-state testing structurally cannot find. Both required stepping back from "does this feature work" to "does this feature's design match the environment it actually runs in."
+
+---
+
+### 8. Tool Use Internals — Beyond the SDK Abstraction
+
+This project's tool-calling (see the MCP section above) runs on the Anthropic SDK's `tool_runner` helper. To understand what it actually automates, built the same mechanics by hand against this project's own `get_weather` and `manage_notes` tool schemas — no `tool_runner`, no MCP — in a standalone script (`tool_use_demo.py`).
+
+```python
+# Forcing a specific tool call — bypasses "auto" and any prompt-wording persuasion
+resp = client.messages.create(
+    model=MODEL, tools=[GET_WEATHER_TOOL],
+    tool_choice={"type": "tool", "name": "get_weather"},
+    messages=[{"role": "user", "content": "Tell me a fact about deserts"}],
+)
+# stop_reason is guaranteed "tool_use" — Claude still infers a best-guess
+# argument (city: "Sahara") rather than refusing, even though the prompt
+# never asked about weather
+```
+
+**Demonstrated, with real API calls and verified results:**
+- **`tool_choice` modes** — `auto` (Claude answered the desert question directly, no tool call) vs. forced `{"type": "tool", "name": "get_weather"}` (same prompt, tool call mandatory) — proved forcing constrains the *action*, not the model's judgment about arguments
+- **`disable_parallel_tool_use`** — a two-tool-inviting prompt produced 2 parallel `tool_use` blocks under `tool_choice: any`; adding `disable_parallel_tool_use: True` collapsed it to exactly 1
+- **Streaming tool arguments** — watched `input_json_delta` events arrive as raw, unparseable JSON fragments (`'{"cit'` → `'{"city": "'` → `'{"city": "Seattle"}'`), only valid once the content block closed — the layer `tool_runner` hides (its Python implementation returns complete messages, not token-level deltas)
+- **Manual multi-turn loop** — built the `tool_use` → execute → `tool_result` → loop cycle from scratch (save a note, read it back, 3 turns total), matching `tool_use_id` by hand and verifying the SQLite write actually persisted via `inspect_db.py` — not just trusting the model's summary
+
+**Why this matters:** every production framework (`tool_runner`, LangChain agents, LlamaIndex) is a convenience layer over these exact primitives. Understanding the raw request/response cycle means being able to debug or reimplement tool-calling behavior when the abstraction doesn't fit — e.g. adding human-in-the-loop approval before a tool executes, which requires the manual loop, not `tool_runner`.
 
 ---
 
