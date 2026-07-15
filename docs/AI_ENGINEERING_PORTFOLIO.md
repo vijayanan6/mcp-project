@@ -5,6 +5,20 @@
 
 ---
 
+## Highlights
+
+**GitHub:** [github.com/vijayanan6/mcp-project](https://github.com/vijayanan6/mcp-project)
+
+A full-stack AI application built entirely from first principles — no LangChain, no scaffolding template, no copied boilerplate. Every capability below was implemented, tested against real API calls and real data, and in several cases debugged down to a root cause most engineers would have missed.
+
+- **A real, working AI product** — semantic document search (RAG), custom MCP tools, live model routing, multimodal (image/PDF) input, and a full LLM cost-observability dashboard with mobile push alerts, all running together as one system.
+- **A recurring engineering discipline, not a one-off**: across at least six separate features, the same pattern shows up — verify the actual behavior of a dependency (an SDK, an API response, a validator) against a live test before trusting an assumption, because self-consistent code can still be systematically wrong. This caught real bugs in cost tracking, citation parsing, MCP resource URIs, and model-routing compatibility — see sections 1–6 below.
+- **Automated quality gates, not manual spot-checks**: a 12/12 (100%) passing eval suite that scores tool selection and model routing on every prompt change, run as a gate before shipping.
+- **Production-grade cost and security discipline**: token-level cost tracking with credit/burn-rate forecasting and Discord mobile alerts; secret-scanning pre-commit hooks; SSH-signed, GitHub-verified commits; dependency vulnerability audits with root-cause tracing (not blanket patching).
+- **Continuously extended, not a frozen demo** — most recently: ephemeral multimodal chat attachments with PDF citations, and the full MCP protocol surface (tools *and* resources *and* prompts, not just tools).
+
+---
+
 ## What I Built
 
 A full-stack AI application where Claude (Anthropic's LLM) uses custom tools to answer questions, search documents semantically, and maintain persistent multi-turn conversations across browser sessions.
@@ -40,6 +54,8 @@ Browser ──HTTP/SSE──► FastAPI (api.py) ──stdio/JSON-RPC──► M
 
 ## Skills & Concepts — Implemented, Not Just Studied
 
+*Ordered by engineering-discipline signal, not build chronology — the strongest debugging/verification work comes first. Full phase-by-phase build history is in [LEARNING_JOURNEY.md](LEARNING_JOURNEY.md).*
+
 ### 1. MCP — Model Context Protocol
 
 Anthropic's open standard for connecting LLMs to external tools. Built a custom MCP server exposing 8 tools over stdio/JSON-RPC — not using a pre-built connector, implementing the protocol directly.
@@ -74,94 +90,137 @@ User question → embed → ChromaDB similarity search → top 4 chunks → Clau
 
 ---
 
-### 3. Streaming — Server-Sent Events
+### 3. Anthropic-Native Tools — Server-Side and Client-Side, Beyond MCP
 
-Real-time response streaming from Claude to the browser as text is generated — the same pattern used by ChatGPT and Claude.ai.
-
-```python
-async def generate():
-    async for msg in runner:
-        if block.type == "text":
-            yield f"data: {json.dumps({'type': 'text', 'content': block.text})}\n\n"
-
-return StreamingResponse(generate(), media_type="text/event-stream")
-```
-
-Event types: `tool` (tool being called), `text` (chunk), `done` (model + token breakdown), `error`
-
----
-
-### 4. Prompt Caching
-
-System prompt marked with `cache_control: ephemeral` — saves ~90% of system prompt token costs after the first API call in a 5-minute window.
+Extended the tool surface beyond MCP with two Anthropic-native tools that don't run through `mcp_server.py` at all: `web_search` (server-side — Anthropic executes it) and a text editor tool (client-side — this process executes it), each requiring a different integration pattern and each surfacing a real production bug that got found and fixed with live testing, not assumption.
 
 ```python
-SYSTEM_PROMPT = [{
-    "type": "text",
-    "text": "You are a helpful assistant...",
-    "cache_control": {"type": "ephemeral"}
-}]
+# Client-side builtin tool: implement the SDK's runnable-tool interface
+class ProjectNotesEditorTool(BetaAsyncBuiltinFunctionTool):
+    def to_dict(self):
+        return {"type": "text_editor_20250728", "name": "str_replace_based_edit_tool"}
+
+    async def call(self, input: dict) -> str:
+        path = self._check_path(input.get("path", ""))  # hard-fails outside one allowed file
+        ...
 ```
 
-Token breakdown tracked per response: `input`, `cache_write`, `cache_read`, `output` — displayed live in the UI.
+**Built and verified, with real browser tests (Playwright MCP) and direct API inspection:**
+- **Server-side vs. client-side tool architecture** — `web_search` needed only a dict declaration (Anthropic resolves it entirely); the text editor tool required implementing `BetaAsyncBuiltinFunctionTool` (`to_dict()` + `call()`) because Claude only *requests* the edit, this process has to execute it
+- **Path-confined tool execution** — the text editor tool is hard-restricted to exactly one file (`knowledge_base/project_notes.md`), not the whole `knowledge_base/` folder; every path is resolved and compared for exact equality before any file operation runs, verified against both `../` traversal and same-folder sibling-file escape attempts
+- **Found and fixed a silent cost-tracking gap** — server-side tool calls arrive as `server_tool_use` content blocks, a different type than the `tool_use` blocks the cost-tracking code checked for; `web_search` calls were billed correctly but invisible in the "Cost by Tool" dashboard view until this was found by directly querying `/usage/data`, not by trusting that the feature "looked like it worked"
+- **Found and fixed a real production bug via model-routing interaction** — `web_search`'s default configuration requires programmatic tool calling, which this project's Haiku tier (used by the cost-based model router) doesn't support; the Anthropic API validates *every declared tool* against model capability at request time, so unrelated Haiku-routed messages started 400ing purely from `web_search` being present in the tool list — fixed with `allowed_callers: ["direct"]`, caught by re-testing the exact failing request end-to-end after the fix, not just reasoning that it should work
+
+**Why this matters:** shared infrastructure (a tool list, a model router) has failure modes that only appear at the *intersection* of two features that each work fine independently. Finding this bug required treating a live end-to-end test as the source of truth over the code's apparent correctness — the same discipline as the `.env` UTF-8 BOM bug (see the Claude Code section below), applied to a different layer of the stack.
 
 ---
 
-### 5. Model Routing
+### 4. Multimodal Chat Input — Ephemeral Image/PDF Attachments with Citations
 
-Automatically routes each query to the cheapest model that can handle it — Haiku (10–20× cheaper) for simple queries, Sonnet for complex/document queries.
+Extended the chat beyond text-only input: users can attach one image or PDF per message, read directly via Claude's native vision/document understanding — no OCR pipeline, no indexing step, for ad-hoc content brought into a live conversation rather than the curated `knowledge_base/` corpus.
 
 ```python
-def _pick_model(message: str) -> str:
-    if len(message) > 120 or any(signal in message.lower() for signal in _COMPLEX_SIGNALS):
-        return "claude-sonnet-4-6"
-    return "claude-haiku-4-5"
+def _build_api_messages(windowed: list, attachment, current_text: str) -> list:
+    """Multimodal content exists ONLY here — for this one API call.
+    `history` (what gets persisted to SQLite) never sees it."""
+    if attachment is None:
+        return windowed
+    content = [_attachment_content_block(attachment)]  # image or document block
+    if current_text:
+        content.append({"type": "text", "text": current_text})
+    api_messages = list(windowed)          # never mutate the caller's list
+    api_messages[-1] = {"role": "user", "content": content}
+    return api_messages
 ```
 
----
+**Built and verified, with real files and real API responses — not just UI clicks:**
+- **Ephemeral design, confirmed by inspecting raw storage, not by trusting the code's intent** — the multimodal content block is built in a throwaway list used for exactly one `tool_runner` call; `history` only ever receives plain text via a small `_history_text_for()` helper. Verified by querying the SQLite row directly after a real attachment turn: every stored message was a plain string, never base64
+- **PDF citations, with a bug caught by testing against the raw API, not the full app stack** — enabled `citations: {enabled: true}` on PDF content blocks so responses cite the exact page they drew from. First implementation silently produced zero citations; a standalone script calling the Anthropic API directly and printing the real response object revealed the citation object's fields are flat (`start_page_number` alongside a `type: "page_location"` discriminator), not nested the way the field name suggested — the original `getattr` chain was checking an attribute that never existed
+- **Distinguished "reads as a PDF" from "has a text layer a citation engine can address"** — a test PDF built by saving a rendered image (no embedded text) was read correctly via vision but produced no citations, which looked like the same bug again until a PDF with real embedded text worked immediately — a distinction the file format alone doesn't reveal
+- **Closed a silent-failure gap in the frontend before it could ship** — a rejected/oversized attachment returns a plain JSON `400`, not an SSE stream; the existing SSE parser would have silently swallowed it (no `data:`-prefixed line to match). Added an explicit `!res.ok` check ahead of the parsing loop as part of the same change, not as a follow-up bug fix
+- **No new cost-tracking code required, confirmed empirically** — image/PDF content bills as ordinary input tokens; a PDF-attached turn showed 2814 input tokens vs. 1002 for a same-session plain-text follow-up, and the existing cost dashboard picked up the difference with zero new wiring
 
-### 6. Persistent Conversation History
-
-Multi-turn sessions stored in SQLite. Full history saved to DB; only the last 10 messages sent to Claude (caps token cost without losing continuity).
-
-- `_safe_window()` — guards against orphaned `tool_result` turns at the history boundary
-- Empty assistant turn guard — never corrupts history on partial responses
-- Sessions survive server restarts and browser refreshes
-
----
-
-### 7. FastAPI + Async Python
-
-- Lifespan hooks keep the MCP server alive across all requests (not spawned per request)
-- Pydantic request validation, async route handlers
-- `app.state` shares tools and API client across all requests
-- REST endpoints: `GET /`, `GET /tools`, `POST /chat`, `POST /stream`, `GET /sessions`, `DELETE /session/{id}`
+**Why this matters:** the highest-value bug here wasn't visible in the UI at all — a wrong `getattr` chain returned `None` silently, with no traceback, no error, just a feature that quietly did nothing. Catching it required stepping outside the running app to call the raw API directly and print the actual object, rather than debugging through the full request/response cycle. The same discipline — verify the real shape of a dependency's response before writing extraction code against an assumed one — generalizes past this one feature.
 
 ---
 
-### 8. PDF OCR Pipeline
+### 5. The Full MCP Protocol Surface — Resources and Prompts, Not Just Tools
 
-- Text-based PDFs: extracted directly via `pypdf`
-- Scanned PDFs: `pymupdf` renders pages to images at 300 DPI → `pytesseract` extracts text
-- Path traversal protection on all file access
+Most MCP integrations stop at tools. Extended this project's MCP server to expose all three primitives the protocol actually defines, verifying each design decision against the real SDK and real project data rather than the textbook example.
+
+```python
+@app.list_resources()
+async def list_resources() -> list[types.Resource]:
+    """Built fresh on every call so note:// entries always reflect current state."""
+    resources = [types.Resource(uri=AnyUrl("knowledgebase://files"), ...)]
+    for title in note_list():  # notes are keyed by title, not a numeric ID
+        resources.append(types.Resource(
+            uri=AnyUrl(f"note://{urllib.parse.quote(title, safe='')}"), ...
+        ))
+    return resources
+```
+
+**Built and verified against the real SDK, not the concept:**
+- **Read the installed SDK's source before writing a single decorator** — inspected `mcp/server/lowlevel/server.py` directly to confirm the exact signatures for `list_resources`/`read_resource`/`list_prompts`/`get_prompt`, and `types.Resource.model_fields` for the real constructor fields, rather than assuming from documentation or the concept alone
+- **Caught an RFC violation before it ever reached the server** — the natural resource URI, `knowledge_base://files`, silently looked correct in code but fails `pydantic.AnyUrl` validation: RFC 3986 disallows underscores in URI scheme names. Verified with a two-line test script before touching the real handler; renamed to `knowledgebase://`
+- **Adapted a generic example to this project's actual schema, not copied it literally** — the natural tutorial-style resource URI is `note://1`, implying numeric IDs; this project's notes are keyed by `title` (a `TEXT PRIMARY KEY`). Verified via a live test that `urllib.parse.quote`/`unquote` round-trips correctly through `pydantic.AnyUrl` for titles containing spaces, mixed case, and slashes, before building the real `note://<title>` resource
+- **Verified end-to-end against a tool whose own auth blocked the obvious path** — MCP Inspector requires a session token printed to its launching terminal, which blocked scripted verification. Rather than fight the browser auth flow, wrote a standalone script using `mcp.ClientSession` — the same client class this project's own `api.py` uses — to call `list_resources`/`read_resource`/`list_prompts`/`get_prompt` directly, confirming correctness with the identical protocol calls Inspector's UI makes
+
+**Why this matters:** two of the three bugs here were "obviously correct" code that failed at a boundary the code itself never suggested existed — a valid-looking URI string, a plausible-looking ID scheme. Both were caught by testing the exact assumption against the real validator or the real database schema before writing the surrounding logic, not by staring at the code harder.
 
 ---
 
-### 9. Configuration & Security
+### 6. Mobile Alerting — Designing for Real Runtime Constraints, Not the Textbook Pattern
 
-- `.env` + `python-dotenv` for API key management (industry standard)
-- `temperature=0.3` — tuned for a tool-using assistant (consistent, not creative)
-- SSL workaround for Windows corporate certificate chains
-- Diagnosed a silent auth failure caused by a UTF-8 byte-order-mark in `.env` — root-caused via structural checks (`grep -c "^ANTHROPIC_API_KEY="`) rather than ever printing the key itself
-- Evaluated a third-party MCP server (Playwright, Microsoft's official package) before installing — checked publisher trust, exact access boundary (browser automation only, no filesystem/shell reach), and where prompt-injection risk actually lives (untrusted external content, not applicable when testing `localhost`)
-- Standing discipline: after every new file, dependency, or MCP server, check `git status` for untracked artifacts and confirm `.gitignore` covers them before considering a change complete — caught a real gap where Playwright's screenshot/snapshot output wasn't ignored and could have leaked session data into the public repo
-- **Indirect prompt injection defense** — identified that `search_docs`/`read_doc` results flow back into Claude's context as `tool_result` blocks, indistinguishable from real instructions unless told otherwise (OWASP's #1 LLM risk, and the standard failure mode for RAG pipelines specifically). Added a `<security>` tag to `SYSTEM_PROMPT` explicitly instructing Claude to treat retrieved document/note content as data, never as commands — verified via the eval suite that the change didn't alter tool-routing behavior
-- **Input sanitization** — `_sanitize_input()` strips control/non-printable characters and caps message length before any user input reaches history or the model, closing off context-window abuse as a separate, cheaper first layer
-- **Caught a stale technique before it shipped** — a planned "response prefilling" approach for structured JSON output turned out to return a hard 400 on this project's own routed model (`claude-sonnet-4-6`); verified live via the Models API that both routed models support `output_config.format` / `client.messages.parse()` instead, and used that as the correct forward path for structured outputs
+Extended the cost dashboard's passive in-browser alert badge into four real-time Discord push notifications — two-tier low-balance (warning/critical), a spend-spike detector, a per-tool budget cap, and a daily digest — landing on a phone instead of requiring the dashboard tab to be open.
+
+```python
+async def _maybe_send_low_credit_alert() -> None:
+    # Two independent cooldowns, each auto-clearing on recovery — critical
+    # supersedes warning so a single drop never double-alerts
+    if remaining <= alert_threshold:
+        if cfg.get("last_warning_sent_at"):
+            clear_warning_cooldown()  # bug found via transition testing, not per-tier testing
+        ...
+```
+
+**Built and verified, with a real Discord webhook and live production data (no staging environment):**
+- **Rejected the "obvious" architecture after checking a runtime assumption** — a background scheduler firing at a fixed time (the standard way to build a "daily digest") silently assumes the process is always running, which this app isn't (`uvicorn --reload`, started manually). Redesigned the trigger to piggyback on real traffic instead: compare today's date to the last-sent date on every request, no new dependency, no missed days
+- **Found a stateful bug that per-tier testing couldn't catch** — testing "does warning fire" and "does critical fire" both passed, but the transition of dropping straight from normal into critical (skipping the warning zone) left the warning tier's cooldown stale, which would have silently suppressed a legitimate re-warn on a later partial recovery. Caught only by testing the actual transition sequence, then fixed and re-verified
+- **Handled a live secret end-to-end safely** — when a real Discord webhook URL arrived directly in the conversation, verified `.gitignore` coverage structurally (`git check-ignore`) and confirmed the write with `grep -c` rather than ever printing the value back
+- **Test discipline against production data with no staging copy** — every alert path (2 balance tiers, spike, per-tool budget, digest) was tested by capturing exact current state, temporarily perturbing only what was needed to force each condition, verifying the effect via direct query, then restoring the original values exactly — zero corruption to real credit tracking across all four test runs
+
+**Why this matters:** the highest-value bug here wasn't a syntax error or a missing null check — it was a design assumption (always-on process) that would have shipped invisibly broken, and a state-transition gap that per-state testing structurally cannot find. Both required stepping back from "does this feature work" to "does this feature's design match the environment it actually runs in."
 
 ---
 
-### 10. AI Cost Dashboard & Credit Tracking
+### 7. Tool Use Internals — Beyond the SDK Abstraction
+
+This project's tool-calling (see the MCP section above) runs on the Anthropic SDK's `tool_runner` helper. To understand what it actually automates, built the same mechanics by hand against this project's own `get_weather` and `manage_notes` tool schemas — no `tool_runner`, no MCP — in a standalone script (`tool_use_demo.py`).
+
+```python
+# Forcing a specific tool call — bypasses "auto" and any prompt-wording persuasion
+resp = client.messages.create(
+    model=MODEL, tools=[GET_WEATHER_TOOL],
+    tool_choice={"type": "tool", "name": "get_weather"},
+    messages=[{"role": "user", "content": "Tell me a fact about deserts"}],
+)
+# stop_reason is guaranteed "tool_use" — Claude still infers a best-guess
+# argument (city: "Sahara") rather than refusing, even though the prompt
+# never asked about weather
+```
+
+**Demonstrated, with real API calls and verified results:**
+- **`tool_choice` modes** — `auto` (Claude answered the desert question directly, no tool call) vs. forced `{"type": "tool", "name": "get_weather"}` (same prompt, tool call mandatory) — proved forcing constrains the *action*, not the model's judgment about arguments
+- **`disable_parallel_tool_use`** — a two-tool-inviting prompt produced 2 parallel `tool_use` blocks under `tool_choice: any`; adding `disable_parallel_tool_use: True` collapsed it to exactly 1
+- **Streaming tool arguments** — watched `input_json_delta` events arrive as raw, unparseable JSON fragments (`'{"cit'` → `'{"city": "'` → `'{"city": "Seattle"}'`), only valid once the content block closed — the layer `tool_runner` hides (its Python implementation returns complete messages, not token-level deltas)
+- **Manual multi-turn loop** — built the `tool_use` → execute → `tool_result` → loop cycle from scratch (save a note, read it back, 3 turns total), matching `tool_use_id` by hand and verifying the SQLite write actually persisted via `inspect_db.py` — not just trusting the model's summary
+
+**Why this matters:** every production framework (`tool_runner`, LangChain agents, LlamaIndex) is a convenience layer over these exact primitives. Understanding the raw request/response cycle means being able to debug or reimplement tool-calling behavior when the abstraction doesn't fit — e.g. adding human-in-the-loop approval before a tool executes, which requires the manual loop, not `tool_runner`.
+
+---
+
+### 8. AI Cost Dashboard & Credit Tracking
 
 Built a full observability layer for LLM API spend — the same class of tooling used in enterprise AI platforms to control costs.
 
@@ -241,11 +300,11 @@ Cache hit     → READ   tokens  → 10× cheaper than input
 System prompt cached after message 1 → near-free on every subsequent turn
 ```
 
-**Key engineering decision:** cost is estimated from token counts × pricing table — no extra API call. Schema migration handled safely with `ALTER TABLE ... ADD COLUMN` + try/except.
+**Key engineering decision:** cost is estimated from token counts × pricing table — no extra API call. Schema migration handled safely with `ALTER TABLE ... ADD COLUMN` + try/except. A stale pricing entry (old Haiku 3.5 rates left in place after migrating to Haiku 4.5) was later found by comparing the dashboard's live balance against the real console.anthropic.com figure — fixed, all affected historical rows backfilled, and the silent fallback that let it hide replaced with a warning for any future unpriced model.
 
 ---
 
-### 11. Prompt Evaluation Pipeline
+### 9. Prompt Evaluation Pipeline
 
 Built an eval pipeline to verify Claude follows system prompt rules — not manually, but automatically with a scored pass/fail report.
 
@@ -271,133 +330,90 @@ Evals caught two real bugs that manual testing missed:
 
 ---
 
-### 12. Tool Use Internals — Beyond the SDK Abstraction
+### 10. Configuration & Security
 
-This project's tool-calling (§1) runs on the Anthropic SDK's `tool_runner` helper. To understand what it actually automates, built the same mechanics by hand against this project's own `get_weather` and `manage_notes` tool schemas — no `tool_runner`, no MCP — in a standalone script (`tool_use_demo.py`).
-
-```python
-# Forcing a specific tool call — bypasses "auto" and any prompt-wording persuasion
-resp = client.messages.create(
-    model=MODEL, tools=[GET_WEATHER_TOOL],
-    tool_choice={"type": "tool", "name": "get_weather"},
-    messages=[{"role": "user", "content": "Tell me a fact about deserts"}],
-)
-# stop_reason is guaranteed "tool_use" — Claude still infers a best-guess
-# argument (city: "Sahara") rather than refusing, even though the prompt
-# never asked about weather
-```
-
-**Demonstrated, with real API calls and verified results:**
-- **`tool_choice` modes** — `auto` (Claude answered the desert question directly, no tool call) vs. forced `{"type": "tool", "name": "get_weather"}` (same prompt, tool call mandatory) — proved forcing constrains the *action*, not the model's judgment about arguments
-- **`disable_parallel_tool_use`** — a two-tool-inviting prompt produced 2 parallel `tool_use` blocks under `tool_choice: any`; adding `disable_parallel_tool_use: True` collapsed it to exactly 1
-- **Streaming tool arguments** — watched `input_json_delta` events arrive as raw, unparseable JSON fragments (`'{"cit'` → `'{"city": "'` → `'{"city": "Seattle"}'`), only valid once the content block closed — the layer `tool_runner` hides (its Python implementation returns complete messages, not token-level deltas)
-- **Manual multi-turn loop** — built the `tool_use` → execute → `tool_result` → loop cycle from scratch (save a note, read it back, 3 turns total), matching `tool_use_id` by hand and verifying the SQLite write actually persisted via `inspect_db.py` — not just trusting the model's summary
-
-**Why this matters:** every production framework (`tool_runner`, LangChain agents, LlamaIndex) is a convenience layer over these exact primitives. Understanding the raw request/response cycle means being able to debug or reimplement tool-calling behavior when the abstraction doesn't fit — e.g. adding human-in-the-loop approval before a tool executes, which requires the manual loop, not `tool_runner`.
+- `.env` + `python-dotenv` for API key management (industry standard)
+- `temperature=0.3` — tuned for a tool-using assistant (consistent, not creative)
+- SSL workaround for Windows corporate certificate chains
+- Diagnosed a silent auth failure caused by a UTF-8 byte-order-mark in `.env` — root-caused via structural checks (`grep -c "^ANTHROPIC_API_KEY="`) rather than ever printing the key itself
+- Evaluated a third-party MCP server (Playwright, Microsoft's official package) before installing — checked publisher trust, exact access boundary (browser automation only, no filesystem/shell reach), and where prompt-injection risk actually lives (untrusted external content, not applicable when testing `localhost`)
+- Standing discipline: after every new file, dependency, or MCP server, check `git status` for untracked artifacts and confirm `.gitignore` covers them before considering a change complete — caught a real gap where Playwright's screenshot/snapshot output wasn't ignored and could have leaked session data into the public repo
+- **Indirect prompt injection defense** — identified that `search_docs`/`read_doc` results flow back into Claude's context as `tool_result` blocks, indistinguishable from real instructions unless told otherwise (OWASP's #1 LLM risk, and the standard failure mode for RAG pipelines specifically). Added a `<security>` tag to `SYSTEM_PROMPT` explicitly instructing Claude to treat retrieved document/note content as data, never as commands — verified via the eval suite that the change didn't alter tool-routing behavior
+- **Input sanitization** — `_sanitize_input()` strips control/non-printable characters and caps message length before any user input reaches history or the model, closing off context-window abuse as a separate, cheaper first layer
+- **Caught a stale technique before it shipped** — a planned "response prefilling" approach for structured JSON output turned out to return a hard 400 on this project's own routed model (`claude-sonnet-4-6`); verified live via the Models API that both routed models support `output_config.format` / `client.messages.parse()` instead, and used that as the correct forward path for structured outputs
 
 ---
 
-### 13. Anthropic-Native Tools — Server-Side and Client-Side, Beyond MCP
+### 11. Streaming — Server-Sent Events
 
-Extended the tool surface beyond MCP with two Anthropic-native tools that don't run through `mcp_server.py` at all: `web_search` (server-side — Anthropic executes it) and a text editor tool (client-side — this process executes it), each requiring a different integration pattern and each surfacing a real production bug that got found and fixed with live testing, not assumption.
+Real-time response streaming from Claude to the browser as text is generated — the same pattern used by ChatGPT and Claude.ai.
 
 ```python
-# Client-side builtin tool: implement the SDK's runnable-tool interface
-class ProjectNotesEditorTool(BetaAsyncBuiltinFunctionTool):
-    def to_dict(self):
-        return {"type": "text_editor_20250728", "name": "str_replace_based_edit_tool"}
+async def generate():
+    async for msg in runner:
+        if block.type == "text":
+            yield f"data: {json.dumps({'type': 'text', 'content': block.text})}\n\n"
 
-    async def call(self, input: dict) -> str:
-        path = self._check_path(input.get("path", ""))  # hard-fails outside one allowed file
-        ...
+return StreamingResponse(generate(), media_type="text/event-stream")
 ```
 
-**Built and verified, with real browser tests (Playwright MCP) and direct API inspection:**
-- **Server-side vs. client-side tool architecture** — `web_search` needed only a dict declaration (Anthropic resolves it entirely); the text editor tool required implementing `BetaAsyncBuiltinFunctionTool` (`to_dict()` + `call()`) because Claude only *requests* the edit, this process has to execute it
-- **Path-confined tool execution** — the text editor tool is hard-restricted to exactly one file (`knowledge_base/project_notes.md`), not the whole `knowledge_base/` folder; every path is resolved and compared for exact equality before any file operation runs, verified against both `../` traversal and same-folder sibling-file escape attempts
-- **Found and fixed a silent cost-tracking gap** — server-side tool calls arrive as `server_tool_use` content blocks, a different type than the `tool_use` blocks the cost-tracking code checked for; `web_search` calls were billed correctly but invisible in the "Cost by Tool" dashboard view until this was found by directly querying `/usage/data`, not by trusting that the feature "looked like it worked"
-- **Found and fixed a real production bug via model-routing interaction** — `web_search`'s default configuration requires programmatic tool calling, which this project's Haiku tier (used by the cost-based model router) doesn't support; the Anthropic API validates *every declared tool* against model capability at request time, so unrelated Haiku-routed messages started 400ing purely from `web_search` being present in the tool list — fixed with `allowed_callers: ["direct"]`, caught by re-testing the exact failing request end-to-end after the fix, not just reasoning that it should work
-
-**Why this matters:** shared infrastructure (a tool list, a model router) has failure modes that only appear at the *intersection* of two features that each work fine independently. Finding this bug required treating a live end-to-end test as the source of truth over the code's apparent correctness — the same discipline as the earlier `.env` UTF-8 BOM bug (§Playwright MCP below), applied to a different layer of the stack.
+Event types: `tool` (tool being called), `text` (chunk), `done` (model + token breakdown), `error`
 
 ---
 
-### 14. Mobile Alerting — Designing for Real Runtime Constraints, Not the Textbook Pattern
+### 12. Prompt Caching
 
-Extended the cost dashboard's passive in-browser alert badge into four real-time Discord push notifications — two-tier low-balance (warning/critical), a spend-spike detector, a per-tool budget cap, and a daily digest — landing on a phone instead of requiring the dashboard tab to be open.
+System prompt marked with `cache_control: ephemeral` — saves ~90% of system prompt token costs after the first API call in a 5-minute window.
 
 ```python
-async def _maybe_send_low_credit_alert() -> None:
-    # Two independent cooldowns, each auto-clearing on recovery — critical
-    # supersedes warning so a single drop never double-alerts
-    if remaining <= alert_threshold:
-        if cfg.get("last_warning_sent_at"):
-            clear_warning_cooldown()  # bug found via transition testing, not per-tier testing
-        ...
+SYSTEM_PROMPT = [{
+    "type": "text",
+    "text": "You are a helpful assistant...",
+    "cache_control": {"type": "ephemeral"}
+}]
 ```
 
-**Built and verified, with a real Discord webhook and live production data (no staging environment):**
-- **Rejected the "obvious" architecture after checking a runtime assumption** — a background scheduler firing at a fixed time (the standard way to build a "daily digest") silently assumes the process is always running, which this app isn't (`uvicorn --reload`, started manually). Redesigned the trigger to piggyback on real traffic instead: compare today's date to the last-sent date on every request, no new dependency, no missed days
-- **Found a stateful bug that per-tier testing couldn't catch** — testing "does warning fire" and "does critical fire" both passed, but the transition of dropping straight from normal into critical (skipping the warning zone) left the warning tier's cooldown stale, which would have silently suppressed a legitimate re-warn on a later partial recovery. Caught only by testing the actual transition sequence, then fixed and re-verified
-- **Handled a live secret end-to-end safely** — when a real Discord webhook URL arrived directly in the conversation, verified `.gitignore` coverage structurally (`git check-ignore`) and confirmed the write with `grep -c` rather than ever printing the value back
-- **Test discipline against production data with no staging copy** — every alert path (2 balance tiers, spike, per-tool budget, digest) was tested by capturing exact current state, temporarily perturbing only what was needed to force each condition, verifying the effect via direct query, then restoring the original values exactly — zero corruption to real credit tracking across all four test runs
-
-**Why this matters:** the highest-value bug here wasn't a syntax error or a missing null check — it was a design assumption (always-on process) that would have shipped invisibly broken, and a state-transition gap that per-state testing structurally cannot find. Both required stepping back from "does this feature work" to "does this feature's design match the environment it actually runs in."
+Token breakdown tracked per response: `input`, `cache_write`, `cache_read`, `output` — displayed live in the UI.
 
 ---
 
-### 15. Multimodal Chat Input — Ephemeral Image/PDF Attachments with Citations
+### 13. Model Routing
 
-Extended the chat beyond text-only input: users can attach one image or PDF per message, read directly via Claude's native vision/document understanding — no OCR pipeline, no indexing step, for ad-hoc content brought into a live conversation rather than the curated `knowledge_base/` corpus.
+Automatically routes each query to the cheapest model that can handle it — Haiku (10–20× cheaper) for simple queries, Sonnet for complex/document queries.
 
 ```python
-def _build_api_messages(windowed: list, attachment, current_text: str) -> list:
-    """Multimodal content exists ONLY here — for this one API call.
-    `history` (what gets persisted to SQLite) never sees it."""
-    if attachment is None:
-        return windowed
-    content = [_attachment_content_block(attachment)]  # image or document block
-    if current_text:
-        content.append({"type": "text", "text": current_text})
-    api_messages = list(windowed)          # never mutate the caller's list
-    api_messages[-1] = {"role": "user", "content": content}
-    return api_messages
+def _pick_model(message: str) -> str:
+    if len(message) > 120 or any(signal in message.lower() for signal in _COMPLEX_SIGNALS):
+        return "claude-sonnet-4-6"
+    return "claude-haiku-4-5"
 ```
-
-**Built and verified, with real files and real API responses — not just UI clicks:**
-- **Ephemeral design, confirmed by inspecting raw storage, not by trusting the code's intent** — the multimodal content block is built in a throwaway list used for exactly one `tool_runner` call; `history` only ever receives plain text via a small `_history_text_for()` helper. Verified by querying the SQLite row directly after a real attachment turn: every stored message was a plain string, never base64
-- **PDF citations, with a bug caught by testing against the raw API, not the full app stack** — enabled `citations: {enabled: true}` on PDF content blocks so responses cite the exact page they drew from. First implementation silently produced zero citations; a standalone script calling the Anthropic API directly and printing the real response object revealed the citation object's fields are flat (`start_page_number` alongside a `type: "page_location"` discriminator), not nested the way the field name suggested — the original `getattr` chain was checking an attribute that never existed
-- **Distinguished "reads as a PDF" from "has a text layer a citation engine can address"** — a test PDF built by saving a rendered image (no embedded text) was read correctly via vision but produced no citations, which looked like the same bug again until a PDF with real embedded text worked immediately — a distinction the file format alone doesn't reveal
-- **Closed a silent-failure gap in the frontend before it could ship** — a rejected/oversized attachment returns a plain JSON `400`, not an SSE stream; the existing SSE parser would have silently swallowed it (no `data:`-prefixed line to match). Added an explicit `!res.ok` check ahead of the parsing loop as part of the same change, not as a follow-up bug fix
-- **No new cost-tracking code required, confirmed empirically** — image/PDF content bills as ordinary input tokens; a PDF-attached turn showed 2814 input tokens vs. 1002 for a same-session plain-text follow-up, and the existing cost dashboard picked up the difference with zero new wiring
-
-**Why this matters:** the highest-value bug here wasn't visible in the UI at all — a wrong `getattr` chain returned `None` silently, with no traceback, no error, just a feature that quietly did nothing. Catching it required stepping outside the running app to call the raw API directly and print the actual object, rather than debugging through the full request/response cycle. The same discipline — verify the real shape of a dependency's response before writing extraction code against an assumed one — generalizes past this one feature.
 
 ---
 
-### 16. The Full MCP Protocol Surface — Resources and Prompts, Not Just Tools
+### 14. Persistent Conversation History
 
-Most MCP integrations stop at tools. Extended this project's MCP server to expose all three primitives the protocol actually defines, verifying each design decision against the real SDK and real project data rather than the textbook example.
+Multi-turn sessions stored in SQLite. Full history saved to DB; only the last 10 messages sent to Claude (caps token cost without losing continuity).
 
-```python
-@app.list_resources()
-async def list_resources() -> list[types.Resource]:
-    """Built fresh on every call so note:// entries always reflect current state."""
-    resources = [types.Resource(uri=AnyUrl("knowledgebase://files"), ...)]
-    for title in note_list():  # notes are keyed by title, not a numeric ID
-        resources.append(types.Resource(
-            uri=AnyUrl(f"note://{urllib.parse.quote(title, safe='')}"), ...
-        ))
-    return resources
-```
+- `_safe_window()` — guards against orphaned `tool_result` turns at the history boundary
+- Empty assistant turn guard — never corrupts history on partial responses
+- Sessions survive server restarts and browser refreshes
 
-**Built and verified against the real SDK, not the concept:**
-- **Read the installed SDK's source before writing a single decorator** — inspected `mcp/server/lowlevel/server.py` directly to confirm the exact signatures for `list_resources`/`read_resource`/`list_prompts`/`get_prompt`, and `types.Resource.model_fields` for the real constructor fields, rather than assuming from documentation or the concept alone
-- **Caught an RFC violation before it ever reached the server** — the natural resource URI, `knowledge_base://files`, silently looked correct in code but fails `pydantic.AnyUrl` validation: RFC 3986 disallows underscores in URI scheme names. Verified with a two-line test script before touching the real handler; renamed to `knowledgebase://`
-- **Adapted a generic example to this project's actual schema, not copied it literally** — the natural tutorial-style resource URI is `note://1`, implying numeric IDs; this project's notes are keyed by `title` (a `TEXT PRIMARY KEY`). Verified via a live test that `urllib.parse.quote`/`unquote` round-trips correctly through `pydantic.AnyUrl` for titles containing spaces, mixed case, and slashes, before building the real `note://<title>` resource
-- **Verified end-to-end against a tool whose own auth blocked the obvious path** — MCP Inspector requires a session token printed to its launching terminal, which blocked scripted verification. Rather than fight the browser auth flow, wrote a standalone script using `mcp.ClientSession` — the same client class this project's own `api.py` uses — to call `list_resources`/`read_resource`/`list_prompts`/`get_prompt` directly, confirming correctness with the identical protocol calls Inspector's UI makes
+---
 
-**Why this matters:** two of the three bugs here were "obviously correct" code that failed at a boundary the code itself never suggested existed — a valid-looking URI string, a plausible-looking ID scheme. Both were caught by testing the exact assumption against the real validator or the real database schema before writing the surrounding logic, not by staring at the code harder.
+### 15. FastAPI + Async Python
+
+- Lifespan hooks keep the MCP server alive across all requests (not spawned per request)
+- Pydantic request validation, async route handlers
+- `app.state` shares tools and API client across all requests
+- REST endpoints: `GET /`, `GET /tools`, `POST /chat`, `POST /stream`, `GET /sessions`, `DELETE /session/{id}`
+
+---
+
+### 16. PDF OCR Pipeline
+
+- Text-based PDFs: extracted directly via `pypdf`
+- Scanned PDFs: `pymupdf` renders pages to images at 300 DPI → `pytesseract` extracts text
+- Path traversal protection on all file access
 
 ---
 
