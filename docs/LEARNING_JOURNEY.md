@@ -1017,6 +1017,31 @@ A 📎 file-attach feature for the chat UI — users can send one image or PDF a
 
 ---
 
+## Phase 24 — The Other Two MCP Primitives: Resources and Prompts
+
+### What We Built
+`mcp_server.py` had only ever used one of MCP's three primitives — tools. Added the other two: **resources** (`knowledgebase://files`, a static file-listing resource; `note://<title>`, one dynamic resource per saved note) and a **prompt** (`summarize_document`, a reusable request template that drives the existing `read_doc`/`search_docs` tools). Verified via MCP Inspector (connected in a prior session) and, when Inspector's browser-based proxy auth blocked automated verification, a direct `mcp.ClientSession` script exercising the identical protocol calls.
+
+### Key Concepts Learned
+
+**Verified the SDK's actual decorator signatures and type field shapes before writing code, instead of assuming from the concept.** Read `mcp/server/lowlevel/server.py` directly (installed `mcp` 1.28.0) to confirm the exact signatures for `@app.list_resources()`, `@app.read_resource()`, `@app.list_prompts()`, `@app.get_prompt()`, and inspected `types.Resource.model_fields` etc. for the real constructor fields — the same discipline as verifying the citation object's shape earlier this session (`INSIGHTS.md` #32), applied to a new API surface before ever running it.
+
+**A URI scheme can't contain an underscore — caught by testing, not by knowing the RFC.** The natural resource URI for this project's file listing was `knowledge_base://files`, matching the folder name exactly. It fails: `pydantic.AnyUrl` raises a `url_parsing` validation error, because RFC 3986 defines a scheme as `ALPHA *( ALPHA / DIGIT / "+" / "-" / "." )` — no underscore allowed. Verified the fix (`knowledgebase://files`, no underscore) with a live test before touching the real server code, rather than guessing at a workaround.
+
+**Adapted the Learning Plan's generic example to this project's actual schema instead of copying it literally.** The plan's example resource URI was `note://1`, implying numeric note IDs. This project's `notes` table is keyed by `title` (`TEXT PRIMARY KEY`), not an auto-increment integer — there is no `note://1`. Used `urllib.parse.quote`/`unquote` to encode the title directly into the URI instead, and verified round-tripping for spaces, mixed case, and slashes in titles with a live script before writing the real handler.
+
+**MCP Inspector's own auth became the reason to verify a different way, not a blocker.** Inspector's proxy requires a session token printed to the terminal it launches from — fine for a human clicking through a browser, but not scriptable from an automated verification pass. Rather than fight the browser auth flow, wrote a standalone script using `mcp.ClientSession` (the same client class `api.py` itself uses) to call `list_resources`/`read_resource`/`list_prompts`/`get_prompt` directly — identical protocol calls to what Inspector's UI makes, just without the browser in between. Confirmed correctness this way, then left the visual Inspector check to a manual pass in an already-authenticated browser tab.
+
+### Before vs After
+| | Before | After |
+|---|---|---|
+| MCP primitives used | Tools only (8) | Tools (8) + resources (2 kinds) + prompts (1) |
+| Note addressing | Only via `manage_notes` tool actions | Also directly addressable as `note://<title>` resources |
+| Document summarization | Ad-hoc prompting only | A reusable `summarize_document` prompt template |
+| `mcp_server.py` docstring | Said "6 tools" (already stale — really 8) | Corrected count, documents all 3 primitives |
+
+---
+
 ## Final Architecture
 
 ```
@@ -1030,7 +1055,7 @@ api.py (FastAPI)
   │         │
   │         │ tool calls
   │         ▼
-  ├──► mcp_server.py (8 MCP Tools)
+  ├──► mcp_server.py (8 MCP Tools, 2 resource kinds, 1 prompt)
   │         │
   │         ├──► database.py (SQLite)
   │         │       ├── notes table

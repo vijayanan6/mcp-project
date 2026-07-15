@@ -22,7 +22,7 @@ MCP Project/
 │   ├── backend/
 │   │   ├── api.py                  — FastAPI web server (primary entry point)
 │   │   ├── agent.py                — CLI agent (original learning version)
-│   │   ├── mcp_server.py            — MCP server with 8 tools
+│   │   ├── mcp_server.py            — MCP server: 8 tools, 2 resource kinds, 1 prompt
 │   │   ├── text_editor_tool.py      — Client-side text editor tool, locked to knowledge_base/project_notes.md
 │   │   ├── database.py              — SQLite layer (notes, sessions, usage_logs, credit_config)
 │   │   └── rag.py                   — ChromaDB semantic search
@@ -59,7 +59,7 @@ api.py (FastAPI)
   ├──► Claude Sonnet 4.6 / Haiku 4.5 (Anthropic API — routed by query complexity)
   │         │ tool calls
   │         ▼
-  ├──► mcp_server.py (8 MCP Tools)
+  ├──► mcp_server.py (8 MCP Tools, 2 resource kinds, 1 prompt)
   │         ├──► database.py  → SQLite (notes, sessions, usage_logs, credit_config)
   │         ├──► rag.py       → ChromaDB (semantic document search)
   │         └──► knowledge_base/ → your documents (txt, md, PDF)
@@ -90,6 +90,17 @@ Three different execution models, one `tools` list:
 | `search_docs` | MCP | Semantic search — finds relevant chunks for any query |
 | `web_search` | Server-side (Anthropic) | Live web search for anything time-sensitive or beyond training data. $10/1,000 searches + token cost. |
 | `str_replace_based_edit_tool` | Client-side (local) | Lets Claude view/edit exactly one file — `knowledge_base/project_notes.md` — nothing else |
+
+---
+
+## MCP Resources & Prompts
+
+`mcp_server.py` uses all three MCP primitives, not just tools:
+
+- **Resources** — read-only, URI-addressable data: `knowledgebase://files` (the file listing, as a resource instead of a tool call) and `note://<title>`, one per saved note.
+- **Prompts** — reusable request templates: `summarize_document` takes a `filename` and returns a pre-built request that drives the existing `read_doc`/`search_docs` tools.
+
+See `CLAUDE.md` § MCP Resources & Prompts for the full design, including a real gotcha (URI schemes can't contain underscores — RFC 3986) caught via testing.
 
 ---
 

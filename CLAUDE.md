@@ -56,14 +56,14 @@ Three processes when the web app runs:
 
 **`src/backend/api.py`** — FastAPI web server. Spawns `src/backend/mcp_server.py` on startup via lifespan, keeps it alive across all requests. Handles HTTP routes, SSE streaming, session management. Auto-indexes `knowledge_base/` into ChromaDB on startup. Stores sessions in SQLite. Also declares two non-MCP Anthropic tools directly in `app.state.tools` — see "Non-MCP Tools" below.
 
-**`src/backend/mcp_server.py`** — MCP server with 8 tools. No knowledge of Claude or HTTP. Notes stored in SQLite via `database.py`. Document search via `rag.py` + ChromaDB.
+**`src/backend/mcp_server.py`** — MCP server exposing all three MCP primitives: 8 tools, 2 resource kinds (`knowledgebase://files`, `note://<title>`), and 1 prompt (`summarize_document`) — see "MCP Resources & Prompts" below. No knowledge of Claude or HTTP. Notes stored in SQLite via `database.py`. Document search via `rag.py` + ChromaDB.
 
 **`src/backend/text_editor_tool.py`** — `ProjectNotesEditorTool`, a client-side Anthropic builtin tool (`BetaAsyncBuiltinFunctionTool`) executed in-process by `api.py`, not via MCP.
 
 **`src/backend/agent.py`** — Original CLI version. Same MCP connection logic as `api.py` but uses `input()` instead of HTTP.
 
 ```
-Browser ──HTTP/SSE──► api.py ──stdio/JSON-RPC──► mcp_server.py (8 tools)
+Browser ──HTTP/SSE──► api.py ──stdio/JSON-RPC──► mcp_server.py (8 tools, 2 resource kinds, 1 prompt)
                         │
                         ├──► text_editor_tool.py (client-side, in-process)
                         │
@@ -100,6 +100,17 @@ Three different execution models share one `tools` list passed to Claude — don
 **Anthropic client-side builtin tool** (e.g. text editor, bash): write a class implementing `anthropic.lib.tools.BetaAsyncBuiltinFunctionTool` (`to_dict()` returns the tool declaration, `call(input)` executes it) — see `text_editor_tool.py` — and instantiate it into `app.state.tools`. Client-side tools must NOT be declared as raw dicts in `tool_runner()`'s `tools` list — the runner only executes objects implementing this interface.
 
 `server_tool_use` blocks (server-side tools) are a **different content-block type** than `tool_use` (client/MCP tools) in the response stream — code that only checks `block.type == "tool_use"` for logging/tracking (e.g. `tools_used.append(...)`) will silently miss every server-side tool call. Handle both types wherever tool calls are counted.
+
+## MCP Resources & Prompts
+
+`mcp_server.py` uses all three MCP primitives, not just tools:
+
+- **Resources** (`@app.list_resources()` / `@app.read_resource()`) — read-only, URI-addressable data the client reads directly, without a function call. Two kinds, both dynamically enumerated on every `list_resources()` call so they reflect current state: `knowledgebase://files` (static — same listing `list_docs` returns, exposed as a resource instead of a tool call) and `note://<url-quoted-title>`, one per row in `note_list()`. Notes are keyed by `title` (TEXT PRIMARY KEY in `database.py`), not a numeric ID, so the URI encodes the title directly via `urllib.parse.quote`/`unquote` — verified this round-trips correctly for spaces, mixed case, and slashes via `pydantic.AnyUrl`.
+- **Prompts** (`@app.list_prompts()` / `@app.get_prompt()`) — reusable request templates a client can invoke by name. `summarize_document` takes a `filename` argument and returns a pre-built message that drives the existing `read_doc`/`search_docs` tools, rather than introducing an unrelated example.
+
+**Gotcha found via testing, not guessing:** a URI scheme cannot contain an underscore per RFC 3986 (`scheme = ALPHA *( ALPHA / DIGIT / "+" / "-" / "." )`) — `AnyUrl("knowledge_base://files")` raises a `url_parsing` validation error; `AnyUrl("knowledgebase://files")` (no underscore) is required instead.
+
+Tested via a direct `mcp.ClientSession` script (`list_resources`/`read_resource`/`list_prompts`/`get_prompt`) rather than only through MCP Inspector's UI — Inspector's browser-based proxy requires a session auth token printed to the launching terminal, which blocked automated verification; the direct client script exercises the identical protocol calls Inspector's UI makes.
 
 ## Image + PDF Attachments (Chat)
 

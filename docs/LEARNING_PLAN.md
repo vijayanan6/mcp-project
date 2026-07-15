@@ -151,14 +151,14 @@ Last updated: July 2026
 
 ---
 
-### MCP Resources & Prompts
-- [ ] Understand the 3 MCP primitives: tools (actions), resources (data), prompts (templates)
-- [ ] Add a resource to `mcp_server.py` that exposes the `docs/` folder listing
-- [ ] Add a resource that exposes a single note by URI (e.g. `note://1`)
-- [ ] Add a prompt template for summarising a document
-- [ ] Test resources and prompts via MCP Inspector
+### MCP Resources & Prompts ✅
+- [x] Understand the 3 MCP primitives: tools (actions), resources (data), prompts (templates)
+- [x] Add a resource to `mcp_server.py` that exposes the `knowledge_base/` folder listing (`knowledgebase://files` — adapted from `docs/` per the Phase 22 reorg; also learned URI schemes can't contain underscores, RFC 3986, caught via a real `pydantic.AnyUrl` validation error)
+- [x] Add a resource that exposes a single note by URI (`note://<title>` — adapted from the plan's `note://1` example since notes are keyed by `title`, not a numeric ID; verified URL-encoding round-trips correctly for spaces/mixed case/slashes)
+- [x] Add a prompt template for summarising a document (`summarize_document`, drives the existing `read_doc`/`search_docs` tools)
+- [x] Test resources and prompts via MCP Inspector (plus a direct MCP client script, since Inspector's browser proxy auth blocked automated verification)
 
-**Success check:** MCP Inspector shows tools + resources + prompts all working
+**Result: all three MCP primitives now live in `mcp_server.py` — 8 tools, 2 resource kinds, 1 prompt — verified end-to-end**
 
 ---
 

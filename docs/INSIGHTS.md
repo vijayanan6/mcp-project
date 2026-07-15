@@ -319,6 +319,14 @@ The deeper issue wasn't just a stale number — it was a silent fallback. `_esti
 
 The generalizable version: any estimate computed entirely from your own code — cost, ETA, confidence score, whatever — can be perfectly self-consistent and still wrong, because self-consistency only proves the arithmetic is stable, not that the inputs are correct. The only way to actually validate an estimate is to check it against a ground truth that lives outside your own system. And any lookup table with a fallback default is a standing risk of the exact same silent drift recurring — the fallback should fail loud, not smooth over a gap that will otherwise go unnoticed until someone stumbles onto it the hard way.
 
+## 34. The Obvious Name Isn't Always a Valid One — Test the Boundary Before Building On It
+
+The natural URI scheme for a resource exposing the `knowledge_base/` folder was `knowledge_base://files` — it matches the folder name exactly, reads clearly, and there was no reason to expect it wouldn't work. It doesn't: `pydantic.AnyUrl` rejects it with a `url_parsing` error, because RFC 3986 defines a URI scheme as letters, digits, `+`, `-`, and `.` only — no underscore. `knowledgebase://files`, with the underscore simply removed, is valid.
+
+Nothing about writing the resource handler itself would have surfaced this — the code that builds `types.Resource(uri=...)` is straightforward and looks correct sitting on the page. The error only appears at the exact moment a string crosses the boundary into a strict validator, which in this case happened to be a few steps downstream (inside the MCP client's `list_resources()` call), not at the point the URI string was written. The fix took one line once found, but finding it required treating "this looks like it should obviously work" as a hypothesis to test, not a fact to build on — the same live-test-before-you-commit-to-an-assumption discipline as verifying the citation object's shape (#32) or the note-title URI round-trip in the same session, just applied to a naming choice instead of a data shape.
+
+The generalizable version: any identifier that has to satisfy an external format spec — a URI scheme, a hostname, an environment variable name, a database column name — has rules that don't always match what "looks natural" for the domain you're modeling. When a name is going to flow into a strict parser or validator you don't control, test that exact string against that exact validator before writing the surrounding code, rather than discovering the constraint only when something downstream throws.
+
 ---
 
 ## The Core Takeaway

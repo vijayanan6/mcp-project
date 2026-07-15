@@ -3,24 +3,33 @@
 MCP Server — Learning Project
 
 This file creates a custom MCP (Model Context Protocol) server.
-It exposes 6 tools that Claude can call:
+It exposes all three MCP primitives:
 
-  • get_current_datetime  — real-time date/time (no params)
-  • calculate             — safe math expression evaluator
-  • get_weather           — mock weather data by city
-  • manage_notes          — SQLite-backed CRUD for text notes (persistent)
+  Tools (8)     — actions Claude can invoke: get_current_datetime, calculate,
+                  get_weather, manage_notes, list_docs, read_doc, index_docs,
+                  search_docs
+  Resources (2 kinds) — read-only, URI-addressable data Claude reads directly:
+                  knowledgebase://files (static file listing) and
+                  note://<title> (one per saved note, enumerated live)
+  Prompts (1)   — reusable request templates: summarize_document
 
 How it works:
   1. The server starts and listens on stdin for JSON-RPC messages
-  2. agent.py launches this as a subprocess and connects via stdio
-  3. agent.py asks "what tools do you have?" → list_tools() is called
+  2. agent.py/api.py launch this as a subprocess and connect via stdio
+  3. The client asks "what tools/resources/prompts do you have?" →
+     list_tools()/list_resources()/list_prompts() are called
   4. When Claude wants to use a tool → call_tool() is called
-  5. Results are returned as TextContent and fed back to Claude
+  5. When a client reads a resource → read_resource() is called
+  6. When a client invokes a prompt → get_prompt() is called
+  7. Results are returned as TextContent and fed back to Claude
 """
 import asyncio
 import math
+import urllib.parse
 from datetime import datetime
 from pathlib import Path
+
+from pydantic import AnyUrl
 
 try:
     from pypdf import PdfReader
@@ -423,6 +432,104 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
             return [types.TextContent(type="text", text=f"Error reading '{filename}': {err}")]
 
     return [types.TextContent(type="text", text=f"Unknown tool: '{name}'")]
+
+
+# ── Resources ──────────────────────────────────────────────────────────────
+# Read-only, URI-addressable data — a different access pattern from tools:
+# clients read a resource by URI instead of calling a function with arguments.
+
+@app.list_resources()
+async def list_resources() -> list[types.Resource]:
+    """
+    Built fresh on every call (not a static list) so it always reflects
+    current state — in particular, the note:// entries below are enumerated
+    live from whatever notes actually exist right now.
+    """
+    resources = [
+        types.Resource(
+            uri=AnyUrl("knowledgebase://files"),
+            name="Knowledge base file listing",
+            description="Lists all files in the knowledge_base/ folder — same data as the list_docs tool, exposed as a resource.",
+            mimeType="text/plain",
+        ),
+    ]
+    for title in note_list():
+        resources.append(types.Resource(
+            uri=AnyUrl(f"note://{urllib.parse.quote(title, safe='')}"),
+            name=title,
+            description=f"Saved note: {title}",
+            mimeType="text/plain",
+        ))
+    return resources
+
+
+@app.read_resource()
+async def read_resource(uri: AnyUrl) -> str:
+    """Called when a client reads a resource by the URI returned above."""
+
+    if uri.scheme == "knowledgebase":
+        docs_dir = Path(__file__).parent.parent.parent / "knowledge_base"
+        docs_dir.mkdir(exist_ok=True)
+        supported = {".txt", ".md", ".csv", ".json", ".py", ".html", ".xml", ".pdf"}
+        files = sorted(f.name for f in docs_dir.iterdir() if f.is_file() and f.suffix in supported)
+        if not files:
+            return "No documents found in the knowledge_base/ folder."
+        return "\n".join(f"  • {f}" for f in files)
+
+    if uri.scheme == "note":
+        title = urllib.parse.unquote(uri.host or "")
+        note = note_get(title)
+        if not note:
+            return f"No note found with title '{title}'."
+        return f"Note: {title}\nCreated: {note['created_at']}\n\n{note['content']}"
+
+    raise ValueError(f"Unknown resource URI: {uri}")
+
+
+# ── Prompts ────────────────────────────────────────────────────────────────
+# Reusable request templates a client can invoke by name — distinct from
+# tools (actions) and resources (data): a prompt returns pre-built message(s)
+# to send to Claude, here one that drives the existing read_doc/search_docs tools.
+
+@app.list_prompts()
+async def list_prompts() -> list[types.Prompt]:
+    return [
+        types.Prompt(
+            name="summarize_document",
+            description="Generate a request asking Claude to read and summarize a document from knowledge_base/",
+            arguments=[
+                types.PromptArgument(
+                    name="filename",
+                    description="Exact filename in knowledge_base/, e.g. 'report.txt'",
+                    required=True,
+                ),
+            ],
+        ),
+    ]
+
+
+@app.get_prompt()
+async def get_prompt(name: str, arguments: dict[str, str] | None) -> types.GetPromptResult:
+    if name == "summarize_document":
+        filename = (arguments or {}).get("filename", "")
+        return types.GetPromptResult(
+            description=f"Summarize {filename}",
+            messages=[
+                types.PromptMessage(
+                    role="user",
+                    content=types.TextContent(
+                        type="text",
+                        text=(
+                            f"Please read and summarize the document '{filename}'. "
+                            f"Use the read_doc or search_docs tool to retrieve its content, "
+                            f"then provide a concise summary of the key points."
+                        ),
+                    ),
+                ),
+            ],
+        )
+
+    raise ValueError(f"Unknown prompt: '{name}'")
 
 
 async def main():

@@ -173,6 +173,20 @@ against this project's own `get_weather` and `manage_notes` tool schemas.
 
 ---
 
+## MCP Resources & Prompts
+
+Tools aren't the only MCP primitive — `mcp_server.py` also exposes the other two:
+
+| Primitive | Handler | What it exposes |
+|---|---|---|
+| Resource (static) | `knowledgebase://files` | Same file listing as `list_docs`, but read by URI instead of a tool call |
+| Resource (dynamic) | `note://<url-quoted-title>` | One per row in `note_list()` — notes are keyed by title, not a numeric ID, so the URI encodes the title directly (round-trips correctly through `pydantic.AnyUrl` for spaces/mixed case/slashes) |
+| Prompt | `summarize_document` | Reusable request template — takes a `filename` argument, returns a message that drives the existing `read_doc`/`search_docs` tools |
+
+**Gotcha:** a URI scheme can't contain an underscore (RFC 3986) — `knowledge_base://` fails `pydantic.AnyUrl` validation; `knowledgebase://` (no underscore) is required.
+
+---
+
 ## The 2 Non-MCP Tools
 
 | Tool | What it does | Execution |
