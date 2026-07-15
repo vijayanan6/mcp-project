@@ -67,6 +67,7 @@ The entry point for the web application. Built with FastAPI.
 - Auto-indexes documents into ChromaDB on startup
 - Exposes endpoints: `/`, `/chat`, `/stream`, `/tools`, `/sessions`, `/usage`, `/usage/data`, `/usage/credit`
 - Routes each message to Haiku or Sonnet via `_pick_model()` based on complexity
+- Accepts one optional image/PDF attachment per turn (`ChatRequest.attachment`) — sent to Claude for that turn only, never persisted (see "Image + PDF Attachments" below)
 - Runs `_run_alert_checks()` after every logged request — pushes Discord mobile alerts (low-balance warning/critical, spend spike, web_search budget, daily digest) when `DISCORD_WEBHOOK_URL` is configured; see `CLAUDE.md` § Discord Mobile Alerts
 - Logs token usage and tool calls to SQLite after every response via `usage_log()`
 
@@ -119,6 +120,7 @@ A single-page chat interface built with vanilla JavaScript.
 - Persists session ID in browser localStorage across page reloads
 - Shows token breakdown and model used after every response
 - Low-credit alert badge pulses red in header when API balance is low
+- 📎 button attaches one image or PDF per message (file picker only — no drag-drop/paste yet), with a removable filename chip before sending
 
 ### usage.html — AI Cost Dashboard
 Visual observability dashboard at `/usage`.
@@ -177,6 +179,27 @@ against this project's own `get_weather` and `manage_notes` tool schemas.
 |---|---|---|
 | `web_search` | Live web search for time-sensitive/current info `search_docs` can't cover | Server-side — Anthropic's infrastructure. `max_uses: 3`, `allowed_callers: ["direct"]` (required so it works when routed to Haiku — see Model Routing below). $10/1,000 searches + tokens. |
 | `str_replace_based_edit_tool` | View/edit exactly `knowledge_base/project_notes.md` | Client-side — `ProjectNotesEditorTool` in `text_editor_tool.py`, run in-process by `api.py` |
+
+---
+
+## Image + PDF Attachments
+
+Not a tool at all — a native Anthropic Messages API content-block feature (vision + document) wired directly into the request-building code in `api.py`, for ad-hoc content a user brings into a conversation (a screenshot, a one-off PDF), separate from the curated `knowledge_base/` corpus.
+
+```
+Browser: user attaches file → base64-encoded client-side, held in memory only
+  → POST /stream {message, session_id, attachment: {media_type, data, filename}}
+  → _validate_attachment() — allowlist + size cap, HTTPException(400) on failure
+  → _build_api_messages() builds a ONE-TURN-ONLY multimodal message for Claude
+  → history (persisted to SQLite) only ever gets the plain-text message +
+    a "[User attached a file: name]" marker — the binary never touches the database
+```
+
+**Ephemeral by design.** The attachment only exists in the local `api_messages` list passed to `tool_runner` for that call. Nothing about the file survives past that one response — a follow-up turn in the same session can't "re-see" it unless the user re-attaches it.
+
+**Citations for PDFs.** PDF attachments enable `citations: {enabled: true}` on the document content block. When Claude's answer draws from a specific page, the response includes an inline `(p.N)` marker, read directly off the citation object's `start_page_number` field. Citations require a PDF with an actual text layer — a purely rasterized/image-based PDF has nothing to cite against.
+
+**Cost.** No separate tracking needed — image/PDF content just becomes extra input tokens, already covered by the existing `usage_log()` pipeline.
 
 ---
 

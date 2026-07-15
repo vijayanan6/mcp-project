@@ -987,6 +987,33 @@ Three layers of dev-workflow security, added after a full OS-level security/perf
 
 ---
 
+## Phase 23 — Image + PDF Attachments: Ephemeral Multimodal Input, Citations, and a Citation-Shape Bug
+
+### What We Built
+A 📎 file-attach feature for the chat UI — users can send one image or PDF alongside a message, and Claude reads it directly via native vision/document understanding (no OCR pipeline). Designed and shipped through a full plan-review-approval cycle: scope questions (upload method, persistence) up front, an Explore pass over the existing request-building code, a Plan agent producing a concrete file-by-file design, then implementation and real end-to-end testing — not just UI clicks, but actual "does Claude understand the image/PDF correctly" checks. Also added an "Available credit" line to the existing Discord daily digest.
+
+### Key Concepts Learned
+
+**"Ephemeral" is a design decision that has to be enforced at the data-flow level, not just intended.** The requirement was: send the file to Claude for this turn's analysis, but never persist it to SQLite session history. The mechanism that makes this actually true: `history` (the list that gets `session_save()`'d) only ever receives plain text from a small `_history_text_for()` helper — the message plus a `[User attached a file: name]` marker. The multimodal content block (image/document + base64) is built separately, in a throwaway `api_messages` list via `_build_api_messages()`, used for exactly one `tool_runner` call and discarded. Verified this actually held by inspecting the raw SQLite row after a real attachment turn — every stored `content` field was a plain string, no base64 anywhere — rather than trusting that the code "should" behave that way.
+
+**A citation field-path bug that only a raw API test call caught.** Citation objects were assumed to nest their location fields under a `.page_location` sub-attribute (a reasonable-looking guess from the field name), so the extraction code did `getattr(getattr(c, "page_location", None), "start_page_number", None)` — which silently always returned `None`, since the attribute simply doesn't exist. The real shape: `start_page_number` sits **flat** on the citation object itself, alongside a `type: "page_location"` discriminator string. This never surfaced as an error — it just quietly produced no citation markers, ever. Caught only by writing a standalone script that called the raw Anthropic API directly with citations enabled and printing the actual response object, rather than debugging through the full app stack. **Generalizable principle: when a library's response shape is even slightly ambiguous from documentation prose, print the actual object once before writing extraction code against an assumed shape — a silent `None` from a wrong `getattr` chain produces no traceback to guide you back to the bug.**
+
+**Citations require a real text layer — a rasterized PDF has nothing to cite against.** The first test PDF was built by saving a Pillow-drawn image as a PDF (`img.save("test.pdf", "PDF")`) — visually a normal-looking PDF, but with no embedded text, just a picture of text on each page. Claude read it fine via vision and even quoted the content accurately, but produced zero citations, which looked like the same bug above until a second PDF built with `fpdf2` (real embedded text) immediately produced correct `(p.1)` citations. The lesson generalizes past this feature: a file's apparent format doesn't guarantee the structure a downstream feature depends on — "it's a PDF" and "it has a text layer a citation engine can address" are different claims.
+
+**Planning up front caught a UX gap the plan itself later exposed as necessary, not optional.** The approved plan called for the frontend to check `!res.ok` on the fetch response before parsing SSE — because a validation `400` returns a plain JSON error, not an SSE stream, and the existing SSE parser would have silently swallowed it (no `data:` prefix to match). This was flagged as a required fix *before* any code was written, not discovered after users hit a silent failure in production.
+
+### Before vs After
+| | Before | After |
+|---|---|---|
+| Chat input | Text only | Text + optional image or PDF attachment (file picker) |
+| Document understanding | Only pre-indexed `knowledge_base/` files via `search_docs` | Ad-hoc, one-off files analyzed directly in a conversation, no indexing step |
+| PDF citations | N/A | PDF attachments cite the exact page Claude drew from, shown inline as `(p.N)` |
+| Session history | Always plain text | Still always plain text — attachments are explicitly ephemeral, verified via direct SQLite inspection |
+| Cost tracking | Token-based, `web_search` needed a special flat-fee exception | Token-based only — confirmed image/PDF tokens need no special handling, unlike `web_search` |
+| Daily Discord digest | Spend/tokens/top-tools recap | Same recap + "Available credit" remaining balance line |
+
+---
+
 ## Final Architecture
 
 ```

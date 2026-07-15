@@ -101,6 +101,20 @@ Three different execution models share one `tools` list passed to Claude — don
 
 `server_tool_use` blocks (server-side tools) are a **different content-block type** than `tool_use` (client/MCP tools) in the response stream — code that only checks `block.type == "tool_use"` for logging/tracking (e.g. `tools_used.append(...)`) will silently miss every server-side tool call. Handle both types wherever tool calls are counted.
 
+## Image + PDF Attachments (Chat)
+
+Not an MCP/server-side/client-side tool like the 10 above — this is a native Anthropic Messages API content-block feature (vision + document), wired directly into `/chat` and `/stream`. `ChatRequest.attachment` (`Attachment` model: `media_type`, `data` base64, optional `filename`) carries at most one image or PDF per turn.
+
+**Ephemeral by design:** `history` (what `session_save()` persists to SQLite) only ever receives plain text from `_history_text_for()` — the message plus a `[User attached a file: name]` marker, never the base64 binary. The multimodal content block only exists in the locally-built `api_messages` list from `_build_api_messages()`, used for that one `tool_runner` call and discarded after. A later turn in the same session has no way to re-see the file unless it's re-attached — confirmed via SQLite inspection during testing (every persisted `content` field is a plain string).
+
+**Validation:** `_validate_attachment()` raises `HTTPException(400)` before any state changes for an unsupported `media_type` (allowlist: `image/jpeg`, `image/png`, `image/gif`, `image/webp`, `application/pdf`), invalid base64, or oversized payload (`_MAX_IMAGE_ATTACHMENT_BYTES` = 5MB, matching Anthropic's own image limit; `_MAX_PDF_ATTACHMENT_BYTES` = 10MB). In `/stream`, this validation runs in `stream_chat()`'s body *before* `StreamingResponse` is constructed, so a 400 comes back as a normal JSON error, not a broken SSE stream — the frontend's `send()` in `chat.html` checks `!res.ok` before parsing SSE for exactly this reason.
+
+**Citations (PDF only):** `_attachment_content_block()` adds `citations: {enabled: true}` to `document`-type blocks (not `image` blocks — citations don't apply to images). When Claude cites a specific page, both endpoints append an inline `(p.N)` marker to the response text by reading `start_page_number` directly off each citation object. **Gotcha found during testing:** the citation object's location fields are flat with a `type: "page_location"` discriminator string — not nested under a `.page_location` sub-attribute the way the field name might suggest. Also: citations only work against a PDF with a real embedded text layer — a purely rasterized/image-based PDF (e.g. one built by saving images via Pillow) has nothing for Claude to cite against, which is correct behavior, not a bug.
+
+**No new cost-tracking code needed** — image/PDF tokens bill as ordinary `input_tokens` in the API response, already captured by the existing `usage_log()` → `_estimate_cost()` pipeline. Confirmed during testing: a PDF-attached turn showed `2814 in` vs. `1002 in` for a plain-text follow-up in the same session, and the `/usage` totals picked up the difference automatically.
+
+**Frontend (`chat.html`):** a 📎 button + hidden `<input type="file">` in the footer, client-side allowlist/size checks mirroring the backend exactly, and a filename chip with a remove (×) control. Drag-drop/paste and multiple attachments per turn are explicitly out of scope for now — file-picker, one file, is the only supported flow.
+
 ## Cost Dashboard & Credit Tracking
 
 `GET  /usage`         — visual HTML dashboard (token usage, cost, daily chart, per-session table)
@@ -126,7 +140,7 @@ The in-dashboard badge only helps if the browser tab is open. `_run_alert_checks
 | 🔴 Critical (low balance) | `remaining ≤ alert_threshold` | 24h, clears on recovery above `alert_threshold`; also clears a stale warning cooldown (critical supersedes warning) | `credit_config.alert_threshold`, default $1 — same field the dashboard badge already uses |
 | 📈 Spend spike | Today's spend ≥ `SPIKE_MIN_ABSOLUTE` ($1) **and** ≥ `SPIKE_MULTIPLIER` (3×) the trailing 7-day daily average | Once per calendar day | Constants in `api.py` — catches a runaway loop or bug *causing* spend, not just the low balance that results from it |
 | 🔎 web_search budget | `web_search`'s cost alone (exact, via `web_search_requests × $0.01`) exceeds `WEB_SEARCH_DAILY_BUDGET` ($1) for the day | Once per calendar day | Constant in `api.py` |
-| 📋 Daily digest | First request of a new calendar day | Once per calendar day | N/A — always fires with yesterday's spend/tokens/top-tools recap |
+| 📋 Daily digest | First request of a new calendar day | Once per calendar day | N/A — fires with yesterday's spend/tokens/top-tools recap, plus an "Available credit" line (same `remaining` formula as the dashboard banner) when credit tracking is configured (`starting_balance > 0`) |
 
 **Why the digest fires on first-request-of-the-day, not a fixed time:** this app only runs when `uvicorn` is started — there's no guarantee it's running at any fixed wall-clock time, so a background scheduler (e.g. APScheduler firing at 8am) could silently miss days entirely. Piggybacking on real traffic means the digest always eventually fires, just possibly later than a fixed hour on light-usage days.
 

@@ -157,6 +157,41 @@
     }
     #send:hover { background: #2d2d4e; }
     #send:disabled { background: #9ca3af; cursor: not-allowed; }
+    #attach-btn {
+      background: transparent;
+      border: 1px solid #d1d5db;
+      border-radius: 10px;
+      font-size: 1.1rem;
+      padding: 0 14px;
+      cursor: pointer;
+    }
+    #attach-btn:hover { background: #f0f2f5; }
+    #attachment-chip {
+      display: none;
+      align-items: center;
+      gap: 8px;
+      background: #eaf4fb;
+      color: #2a7aaa;
+      border-radius: 8px;
+      padding: 6px 12px;
+      margin: 0 16px 8px 16px;
+      font-size: 0.85rem;
+      align-self: flex-start;
+    }
+    #remove-attachment {
+      background: transparent;
+      border: none;
+      color: #2a7aaa;
+      font-size: 1rem;
+      cursor: pointer;
+      line-height: 1;
+    }
+    #attachment-error {
+      display: none;
+      color: #ef4444;
+      font-size: 0.8rem;
+      padding: 0 16px 6px 16px;
+    }
   </style>
 </head>
 <body>
@@ -173,7 +208,15 @@
 
 <div id="messages"></div>
 
+<div id="attachment-chip">
+  📎 <span id="attachment-name"></span>
+  <button id="remove-attachment" type="button" title="Remove attachment">×</button>
+</div>
+<div id="attachment-error"></div>
+
 <footer>
+  <input id="file-input" type="file" accept="image/jpeg,image/png,image/gif,image/webp,application/pdf" style="display:none" />
+  <button id="attach-btn" type="button" title="Attach image or PDF">📎</button>
   <input id="input" type="text" placeholder="Ask anything…" autocomplete="off" />
   <button id="send">Send</button>
 </footer>
@@ -184,6 +227,63 @@
   const messagesEl = document.getElementById("messages");
   const inputEl    = document.getElementById("input");
   const sendBtn    = document.getElementById("send");
+
+  // ── Attachments (image/PDF) ─────────────────────────────────────────────
+  const ATTACHMENT_ALLOWED_TYPES = ["image/jpeg","image/png","image/gif","image/webp","application/pdf"];
+  const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+  const MAX_PDF_BYTES   = 10 * 1024 * 1024;
+  let pendingAttachment = null;   // { media_type, data, filename } | null
+
+  const fileInputEl   = document.getElementById("file-input");
+  const attachBtnEl   = document.getElementById("attach-btn");
+  const chipEl        = document.getElementById("attachment-chip");
+  const chipNameEl     = document.getElementById("attachment-name");
+  const removeAttachEl = document.getElementById("remove-attachment");
+  const attachErrorEl  = document.getElementById("attachment-error");
+
+  function showAttachmentError(msg) {
+    attachErrorEl.textContent = msg;
+    attachErrorEl.style.display = "block";
+  }
+
+  function clearAttachment() {
+    pendingAttachment = null;
+    chipEl.style.display = "none";
+    attachErrorEl.style.display = "none";
+    fileInputEl.value = "";
+  }
+
+  function handleFileSelect() {
+    attachErrorEl.style.display = "none";
+    const file = fileInputEl.files[0];
+    if (!file) return;
+
+    if (!ATTACHMENT_ALLOWED_TYPES.includes(file.type)) {
+      showAttachmentError(`Unsupported file type: ${file.type || "unknown"}`);
+      fileInputEl.value = "";
+      return;
+    }
+    const cap = file.type === "application/pdf" ? MAX_PDF_BYTES : MAX_IMAGE_BYTES;
+    if (file.size > cap) {
+      showAttachmentError(`File too large (max ${cap / (1024 * 1024)}MB for this file type)`);
+      fileInputEl.value = "";
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      const base64Data = reader.result.split(",")[1]; // strip "data:...;base64,"
+      pendingAttachment = { media_type: file.type, data: base64Data, filename: file.name };
+      chipNameEl.textContent = file.name;
+      chipEl.style.display = "flex";
+    };
+    reader.onerror = () => showAttachmentError("Could not read file");
+    reader.readAsDataURL(file);
+  }
+
+  attachBtnEl.addEventListener("click", () => fileInputEl.click());
+  fileInputEl.addEventListener("change", handleFileSelect);
+  removeAttachEl.addEventListener("click", clearAttachment);
 
   // ── Load tools ───────────────────────────────────────────────────────────
   fetch("/tools")
@@ -232,11 +332,13 @@
   // ── Send message ─────────────────────────────────────────────────────────
   async function send() {
     const text = inputEl.value.trim();
-    if (!text) return;
+    if (!text && !pendingAttachment) return;
 
+    const attachmentToSend = pendingAttachment;
     inputEl.value = "";
+    clearAttachment();
     sendBtn.disabled = true;
-    addMsg(text, "user");
+    addMsg(attachmentToSend ? `${text}\n📎 ${attachmentToSend.filename}`.trim() : text, "user");
 
     // Typing indicator
     const typing = document.createElement("div");
@@ -252,8 +354,18 @@
       const res = await fetch("/stream", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: text, session_id: sessionId }),
+        body: JSON.stringify({ message: text, session_id: sessionId, attachment: attachmentToSend }),
       });
+
+      if (!res.ok) {
+        let detail = res.statusText;
+        try { detail = (await res.json()).detail || detail; } catch {}
+        typing.remove();
+        addMsg("Error: " + detail, "assistant");
+        sendBtn.disabled = false;
+        inputEl.focus();
+        return;
+      }
 
       const reader  = res.body.getReader();
       const decoder = new TextDecoder();

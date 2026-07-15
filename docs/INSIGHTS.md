@@ -303,6 +303,14 @@ Told to "execute" a list of four approved items, one of which was generating a n
 
 The generalizable version: an agent's own safety classifier stopping an action mid-stream isn't an obstacle standing between you and the "real" task — it's the system correctly noticing that consent was implied, not stated, for the one step that mattered most (creating persistent access, not just reading state or editing a file). Treating the block as the thing to solve, rather than the thing to explain, is how automation quietly outruns what a user actually agreed to.
 
+## 32. A Wrong `getattr` Chain Fails Silently — Print the Real Object Before Trusting an Assumed Shape
+
+Adding page citations for PDF attachments meant reading a field off each citation object returned by the API. The field name (`page_location`) made it easy to assume the location data was nested under a `.page_location` sub-attribute, so the extraction code did `getattr(getattr(c, "page_location", None), "start_page_number", None)`. That attribute doesn't exist — the real shape has `start_page_number` sitting flat on the citation object itself, with `type: "page_location"` as a plain discriminator string, not a container. The bug produced no error and no traceback. It just returned `None` every time, so the citation markers silently never appeared — the kind of failure that's invisible unless you're specifically checking for the thing that's missing, rather than watching for something breaking.
+
+It was only caught by writing a five-line standalone script that called the raw API directly with citations enabled and printed the actual response object — not by stepping through the full application. A second, related surprise came right after: the first test PDF (built by saving a Pillow-rendered image as a PDF) produced zero citations even after the fix, which looked like the same bug again — until a PDF with a real embedded text layer worked immediately. The PDF "worked" for reading and summarizing via vision either way; only the citation feature specifically needed the underlying text structure, a distinction the file format alone didn't reveal.
+
+The generalizable version: any time a library's response shape is inferred from a field name, a doc sentence, or a plausible-looking guess rather than an object you've actually inspected, the risk isn't a crash — it's a `None` that silently degrades a feature to doing nothing. The fix is cheap (one throwaway script printing the real object) and should happen *before* writing extraction logic against an assumed shape, not after noticing the feature quietly isn't working.
+
 ---
 
 ## The Core Takeaway

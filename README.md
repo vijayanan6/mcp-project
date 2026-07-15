@@ -93,6 +93,25 @@ Three different execution models, one `tools` list:
 
 ---
 
+## Image + PDF Attachments
+
+Attach an image or PDF to a chat message (📎 button in the chat UI) and Claude reads it directly —
+native vision/document understanding, no OCR pipeline needed. This is for ad-hoc content brought
+into a conversation (a screenshot to debug, a one-off PDF to summarize), separate from the curated,
+pre-indexed `knowledge_base/` corpus used by `search_docs`.
+
+- **Ephemeral** — the file is sent to Claude for that turn only; conversation history persists as
+  plain text, never the binary, so later turns don't resend it.
+- **Citations** — PDF attachments get page citations enabled; when Claude cites specific content,
+  the response includes an inline `(p.N)` page reference.
+- **No new cost tracking needed** — image/PDF tokens bill as ordinary input tokens, already
+  captured by the existing cost dashboard.
+
+See `CLAUDE.md` § Image + PDF Attachments for the full design (validation, size caps, the
+ephemeral-history mechanism).
+
+---
+
 ## Setup
 
 ### Prerequisites
@@ -155,7 +174,8 @@ handling — see `CLAUDE.md` for how.
 **Mobile alerts:** set `DISCORD_WEBHOOK_URL` in `.env` to get real-time Discord push
 notifications (via Discord's mobile app) instead of only the passive in-browser badge —
 covers low-balance warnings (2 tiers), a spend-spike alert, a per-tool budget alert for
-`web_search`, and a daily usage digest. Fully optional; every check no-ops if unset. See
+`web_search`, and a daily usage digest (spend/tokens/top-tools recap plus available credit
+remaining). Fully optional; every check no-ops if unset. See
 `CLAUDE.md` § Discord Mobile Alerts for the full trigger/cooldown design.
 
 This dashboard tracks **Anthropic API usage only** — not your Claude Pro subscription (a separate,
