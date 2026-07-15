@@ -1037,19 +1037,25 @@ api.py (FastAPI)
   │         │       ├── index_docs
   │         │       └── search_docs
   │         │
-  │         └──► docs/ folder
+  │         └──► knowledge_base/ folder
   │                 ├── .txt files
   │                 ├── .md files
   │                 └── .pdf → convert_pdfs.py → .txt
   │
-  ├──► text_editor_tool.py (client-side tool — locked to docs/project_notes.md)
+  ├──► text_editor_tool.py (client-side tool — locked to knowledge_base/project_notes.md)
   │
   ├──► web_search (server-side tool — runs on Anthropic's infrastructure)
   │
-  ├──► Discord webhook (mobile alerts — low balance, spend spike, tool budget, digest)
+  ├──► image/PDF attachments (Messages API content blocks — ephemeral, one per turn, PDF citations)
+  │
+  ├──► Discord webhook (mobile alerts — low balance, spend spike, tool budget, digest with available credit)
   │
   └──► agent.py (CLI — original learning version, still works)
 ```
+
+Reorganized in Phase 22 into `src/backend/`, `src/frontend/`, `scripts/`, `docs/`, `data/` — file
+names above are unchanged, only their folder stayed the same convention used throughout this
+document (bare filenames, no path prefix).
 
 ---
 
