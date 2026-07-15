@@ -28,11 +28,11 @@ env/
 .idea/
 *.suo
 
-# Database (local only — not committed)
-data/data.db
-
-# ChromaDB vector database (local only)
-data/chroma_db/
+# Local data directory (local only — not committed): data.db, chroma_db/, and
+# any other artifact that lands here (e.g. pre-migration backups like
+# data.db.bak-*) — widened from two literal paths after one such backup file
+# showed up as untracked and wasn't covered by the narrower pattern.
+data/
 
 # OS
 .DS_Store

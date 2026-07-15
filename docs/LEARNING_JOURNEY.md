@@ -1002,6 +1002,8 @@ A 📎 file-attach feature for the chat UI — users can send one image or PDF a
 
 **Planning up front caught a UX gap the plan itself later exposed as necessary, not optional.** The approved plan called for the frontend to check `!res.ok` on the fetch response before parsing SSE — because a validation `400` returns a plain JSON error, not an SSE stream, and the existing SSE parser would have silently swallowed it (no `data:` prefix to match). This was flagged as a required fix *before* any code was written, not discovered after users hit a silent failure in production.
 
+**Real usage right after shipping caught an unrelated pricing bug the feature itself never touched.** Comparing the cost dashboard's "remaining" balance against the real figure on console.anthropic.com surfaced a ~$0.10 gap. The cause: `database.py`'s `_PRICING` table had `claude-haiku-4-5` priced at old Claude Haiku 3.5 rates ($0.0008/$0.004 per 1K tokens instead of the correct $0.001/$0.005), undercounting every Haiku-routed request by ~20% — invisible from inside the app, since every chart and total was internally consistent with every other one; only an external source of truth (the real bill) could expose it. Fixed the rate, backfilled all 44 affected historical rows in `usage_logs` rather than just fixing it going forward, and closed the structural gap that let it hide: `_estimate_cost()`'s fallback for an unrecognized model (`_PRICING.get(model, _PRICING["claude-sonnet-4-6"])`) used to silently inherit Sonnet's rate — now it prints a warning instead, so a future unpriced model announces itself immediately rather than waiting for the next accidental bill comparison. See `INSIGHTS.md` #33.
+
 ### Before vs After
 | | Before | After |
 |---|---|---|
@@ -1011,6 +1013,7 @@ A 📎 file-attach feature for the chat UI — users can send one image or PDF a
 | Session history | Always plain text | Still always plain text — attachments are explicitly ephemeral, verified via direct SQLite inspection |
 | Cost tracking | Token-based, `web_search` needed a special flat-fee exception | Token-based only — confirmed image/PDF tokens need no special handling, unlike `web_search` |
 | Daily Discord digest | Spend/tokens/top-tools recap | Same recap + "Available credit" remaining balance line |
+| Haiku pricing | Stale Haiku-3.5-era rates, undercounting ~20% | Corrected rates; unrecognized-model fallback now warns instead of silently mispricing |
 
 ---
 

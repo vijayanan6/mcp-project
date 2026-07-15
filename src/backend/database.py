@@ -102,10 +102,19 @@ def init_db() -> None:
 
 
 # ── Pricing (USD per 1K tokens) ───────────────────────────────────────────────
-
+# Manual snapshot — Anthropic's API has no endpoint that returns live pricing
+# (the Models API returns capabilities/context window, not cost), so this must
+# be re-verified by hand against console.anthropic.com/settings/billing (or the
+# claude-api skill's Current Models table) whenever:
+#   1. Anthropic announces a pricing change for a model already listed here, or
+#   2. `_pick_model()` in api.py starts routing to a model not yet listed here
+#      (see the fallback warning in _estimate_cost() below — it exists so a new,
+#      unpriced model gets flagged instead of silently mispriced).
+# Last verified: 2026-07-15 (found and fixed claude-haiku-4-5 carrying stale
+# Haiku-3.5-era rates — see LEARNING_JOURNEY.md / INSIGHTS.md for the writeup).
 _PRICING = {
     "claude-haiku-4-5": {
-        "input": 0.0008, "cache_write": 0.001, "cache_read": 0.00008, "output": 0.004
+        "input": 0.001, "cache_write": 0.00125, "cache_read": 0.0001, "output": 0.005
     },
     "claude-sonnet-4-6": {
         "input": 0.003, "cache_write": 0.00375, "cache_read": 0.0003, "output": 0.015
@@ -118,7 +127,13 @@ _WEB_SEARCH_COST_PER_USE = 0.01
 
 def _estimate_cost(model: str, input_tokens: int, cache_write: int, cache_read: int, output_tokens: int, web_search_requests: int = 0) -> float:
     """Estimate cost in USD based on token counts, model pricing, and server-tool fees."""
-    p = _PRICING.get(model, _PRICING["claude-sonnet-4-6"])
+    p = _PRICING.get(model)
+    if p is None:
+        # Falling back silently is exactly how the Haiku pricing drift went
+        # unnoticed — surface it instead so a newly-routed model gets a
+        # _PRICING entry added rather than quietly inheriting Sonnet's rate.
+        print(f"[cost] WARNING: no _PRICING entry for model '{model}' — falling back to claude-sonnet-4-6 rates. Add a real entry in database.py._PRICING.")
+        p = _PRICING["claude-sonnet-4-6"]
     return (
         input_tokens      / 1000 * p["input"] +
         cache_write       / 1000 * p["cache_write"] +

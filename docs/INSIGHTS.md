@@ -311,6 +311,14 @@ It was only caught by writing a five-line standalone script that called the raw 
 
 The generalizable version: any time a library's response shape is inferred from a field name, a doc sentence, or a plausible-looking guess rather than an object you've actually inspected, the risk isn't a crash — it's a `None` that silently degrades a feature to doing nothing. The fix is cheap (one throwaway script printing the real object) and should happen *before* writing extraction logic against an assumed shape, not after noticing the feature quietly isn't working.
 
+## 33. A Cost Estimate Has No Ground Truth Until You Compare It Against the Real Bill
+
+The cost dashboard's `_PRICING` table had been quietly charging every Haiku-routed request at old Claude Haiku 3.5 rates instead of Haiku 4.5's — about 20% low on input and output tokens alike. Nothing in the app could have caught this on its own: every number was internally consistent, every chart matched every other chart, the math was applied correctly — it was just multiplying by the wrong constant. The only thing capable of exposing it was an external source of truth: the real balance shown on console.anthropic.com, compared against the dashboard's own "remaining" figure. A $0.10 gap between the two was the only signal that anything was wrong at all.
+
+The deeper issue wasn't just a stale number — it was a silent fallback. `_estimate_cost()` looked up a model's price with `_PRICING.get(model, _PRICING["claude-sonnet-4-6"])`, so any model not yet in the dict would quietly inherit Sonnet's pricing forever, with no error, no warning, nothing to notice until the next time someone happened to compare against a real bill. That's the same shape as the pattern in Insight #32 — a `getattr` chain that fails silently instead of loudly — just one layer up, in a cost model instead of a data model. The fix wasn't only correcting the number; it was replacing the silent fallback with a printed warning, so an unpriced model in the future announces itself instead of waiting to be discovered by accident.
+
+The generalizable version: any estimate computed entirely from your own code — cost, ETA, confidence score, whatever — can be perfectly self-consistent and still wrong, because self-consistency only proves the arithmetic is stable, not that the inputs are correct. The only way to actually validate an estimate is to check it against a ground truth that lives outside your own system. And any lookup table with a fallback default is a standing risk of the exact same silent drift recurring — the fallback should fail loud, not smooth over a gap that will otherwise go unnoticed until someone stumbles onto it the hard way.
+
 ---
 
 ## The Core Takeaway
