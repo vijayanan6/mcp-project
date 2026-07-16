@@ -30,10 +30,11 @@ Last updated: July 2026
 - [x] Anthropic-native tools beyond MCP — server-side (`web_search`, no local execution) vs. client-side (`BetaAsyncBuiltinFunctionTool`, local execution) vs. MCP; found and fixed a real multi-model tool-capability bug in production
 - [x] Multi-channel alerting with stateful cooldowns — Discord webhook alerts, tested at the state *transitions* (not just each state), designed around actual runtime guarantees instead of the textbook scheduler pattern
 - [x] MCP Inspector — launched via `npx @modelcontextprotocol/inspector python src/backend/mcp_server.py`, connected past the proxy auth-token prompt, tested at least one tool directly against the running server, no Claude API call needed
+- [x] MCP resources & prompts — the two MCP primitives beyond tools; built, then found via `/code-review` to be unreachable through the running app (server-side only, never wired into `api.py`), fixed
+- [x] Error Handling & Resilience — 429 backoff (SDK-native, verified not hand-rolled), clean errors instead of raw 500s/tracebacks, MCP crash detection (manual recovery, automatic reconnect attempted and reverted after live testing), `search_docs` relevance-threshold fallback, circuit breaker pattern understood and deliberately not built (no failure point in this app has the expensive-repeated-call shape it protects against)
 
 ### Not Yet Started ❌
 - [ ] pytest — testing framework for MCP tools and FastAPI routes
-- [x] MCP resources & prompts — the two MCP primitives beyond tools
 - [ ] Docker
 - [ ] GCP hands-on deployment
 - [ ] React frontend
@@ -87,13 +88,13 @@ Last updated: July 2026
 
 ---
 
-### Error Handling & Resilience
+### Error Handling & Resilience ✅
 - [x] Handle Anthropic API rate limit errors (429) with exponential backoff retry — `AsyncAnthropic`'s default `max_retries=2` already does this internally (verified via SDK source, not assumed); no hand-rolled retry loop needed
 - [x] Handle API timeout errors gracefully — return a user-friendly message, not a 500 — `/chat` and `/stream` both catch `anthropic.APIError` and return/emit a clean message instead of a raw traceback
 - [x] Handle MCP server crashes — detect, and restart *manually* (automatic in-process restart attempted and deliberately reverted — see `_mcp_crash_detected()`'s docstring in `api.py`: anyio cancel scopes are bound to the task that opened them, so reconnecting from a request-handler task corrupts the connection; the correct fix is a dedicated connection-owner task, judged not worth building for a manually-run local tool with no uptime requirement). All 6 MCP-touching routes now return a clean 503 instead of a raw 500 on a detected crash.
 - [x] Add fallback behaviour when `search_docs` returns no results — ChromaDB's nearest-neighbor search always returns *something* if the collection is non-empty, however weak the match, so the real gap wasn't an empty result (already handled) but a low-relevance one silently presented as real content. Now enforces the relevance threshold (similarity > 0.2) `search()`'s own docstring already named but never applied — verified live against real project data: "H1B visa approval" scores 0.478 (passes), "chocolate chip cookie recipe" scores 0.123 (correctly falls back, with a list of what the knowledge base actually covers).
 - [x] Never let an unhandled exception reach the user — always return a clean error SSE event — `/stream` already caught broadly; `/chat` previously had no error handling at all, now fixed
-- [ ] Understand circuit breaker pattern — stop calling a failing service temporarily
+- [x] Understand circuit breaker pattern — stop calling a failing service temporarily. Closed/open/half-open states: after enough failures, trip open and fail immediately without attempting the real call for a cooldown period, then allow one trial call through (half-open) before fully closing again. Deliberately not implemented in this app: it protects against *expensive, slow, repeated* calls to a struggling dependency under real concurrent traffic — neither failure point here has that shape. `anyio.ClosedResourceError` (MCP crash) fires near-instantly, no timeout to skip; Anthropic API failures already get SDK-level backoff, and this app has no concurrent traffic for a breaker to protect a struggling service from. Understood and could point to where it'd apply (wrapping the MCP connection check) if asked in an interview — not built, since the only real reason to build it here would be interview rep-building rather than an actual gap in this app.
 
 **Success check:** App handles API rate limits, timeouts, and MCP crashes without crashing or showing raw tracebacks to the user
 
