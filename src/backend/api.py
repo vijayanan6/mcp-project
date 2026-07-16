@@ -43,6 +43,7 @@ from database import (
     mark_alert_sent, clear_alert_cooldown, mark_warning_sent, clear_warning_cooldown,
     mark_spike_alert_sent, mark_digest_sent, mark_web_search_budget_alert_sent,
     total_cost_for_date, web_search_cost_for_date, trailing_daily_average, daily_digest,
+    pricing_warnings_pending, mark_pricing_warning_sent,
 )
 from text_editor_tool import ProjectNotesEditorTool
 
@@ -633,6 +634,27 @@ async def _maybe_send_web_search_budget_alert() -> None:
         mark_web_search_budget_alert_sent(today_str)
 
 
+async def _maybe_send_pricing_warning_alert() -> None:
+    """Push a Discord alert for any model that hit _PRICING's fallback (an
+    unrecognized model routed through _pick_model() without a real pricing
+    entry). One-time per model, not a daily cooldown — see
+    pricing_warnings_pending()'s docstring for why."""
+    pending = pricing_warnings_pending()
+    if not pending:
+        return
+
+    models_list = ", ".join(f"`{m}`" for m in pending)
+    message = (
+        f"⚠️ **MCP Project — missing pricing data**\n"
+        f"No `_PRICING` entry for: {models_list}\n"
+        f"Costs for these are being estimated using Sonnet's rate as a fallback — "
+        f"add a real entry in `database.py`'s `_PRICING` dict."
+    )
+    if await _send_discord(message):
+        for model in pending:
+            mark_pricing_warning_sent(model)
+
+
 async def _run_alert_checks() -> None:
     """Run all Discord alert checks after a request logs usage. Each check is
     isolated — one failing (e.g. a DB error) must not skip the others or ever
@@ -644,6 +666,7 @@ async def _run_alert_checks() -> None:
         _maybe_send_spend_spike_alert,
         _maybe_send_daily_digest,
         _maybe_send_web_search_budget_alert,
+        _maybe_send_pricing_warning_alert,
     ):
         try:
             await check()

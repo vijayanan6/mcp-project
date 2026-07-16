@@ -72,6 +72,13 @@ def init_db() -> None:
             except Exception:
                 pass
         conn.execute("""
+            CREATE TABLE IF NOT EXISTS pricing_warnings (
+                model         TEXT PRIMARY KEY,
+                first_seen_at TEXT NOT NULL,
+                alert_sent_at TEXT
+            )
+        """)
+        conn.execute("""
             CREATE TABLE IF NOT EXISTS credit_config (
                 id                  INTEGER PRIMARY KEY CHECK (id = 1),
                 starting_balance    REAL NOT NULL DEFAULT 0,
@@ -157,6 +164,30 @@ def usage_log(session_id: str, model: str, input_tokens: int, cache_write: int, 
             """,
             (project, session_id, model, input_tokens, cache_write, cache_read, output_tokens, web_search_requests, cost, json.dumps(tools or []), datetime.now().isoformat()),
         )
+        if model not in _PRICING:
+            # _estimate_cost() already printed a console warning for this fallback;
+            # record it too so _run_alert_checks (api.py) can push a Discord alert
+            # instead of that warning depending on someone tailing server logs.
+            conn.execute(
+                "INSERT OR IGNORE INTO pricing_warnings (model, first_seen_at) VALUES (?, ?)",
+                (model, datetime.now().isoformat()),
+            )
+        conn.commit()
+
+
+def pricing_warnings_pending() -> list[str]:
+    """Models that hit _PRICING's fallback and haven't had a Discord alert sent
+    yet. One-time per model (not a daily cooldown like the other alerts) — this
+    is a config gap, not a spend threshold, and stops recurring once a real
+    _PRICING entry is added."""
+    with get_connection() as conn:
+        rows = conn.execute("SELECT model FROM pricing_warnings WHERE alert_sent_at IS NULL").fetchall()
+    return [r["model"] for r in rows]
+
+
+def mark_pricing_warning_sent(model: str) -> None:
+    with get_connection() as conn:
+        conn.execute("UPDATE pricing_warnings SET alert_sent_at = ? WHERE model = ?", (datetime.now().isoformat(), model))
         conn.commit()
 
 
