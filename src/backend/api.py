@@ -31,7 +31,7 @@ load_dotenv()
 import httpx
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse, StreamingResponse
-from pydantic import BaseModel
+from pydantic import AnyUrl, BaseModel
 
 from anthropic import AsyncAnthropic
 from anthropic.lib.tools.mcp import async_mcp_tool
@@ -100,6 +100,11 @@ async def lifespan(app: FastAPI):
             # Store on app.state so all route handlers can access them
             app.state.tools = tools
             app.state.tool_names = tool_names
+            # Kept alive for the app's lifetime (same session used by the tools
+            # above) so /resources and /prompts routes can call list_resources()/
+            # read_resource()/list_prompts()/get_prompt() live instead of a stale
+            # startup snapshot — resources in particular change as notes are added.
+            app.state.mcp_session = mcp_session
 
             # Windows: SSLKEYLOGFILE may point to a monitoring driver that Python
             # can't write to. Pop it before creating any SSL context.
@@ -158,6 +163,65 @@ async def home():
 async def list_tools():
     """Return the list of available MCP tools."""
     return {"tools": app.state.tool_names}
+
+
+@app.get("/resources")
+async def list_mcp_resources():
+    """Return available MCP resources (knowledge base listing + one per saved note)."""
+    result = await app.state.mcp_session.list_resources()
+    return {
+        "resources": [
+            {"uri": str(r.uri), "name": r.name, "description": r.description}
+            for r in result.resources
+        ]
+    }
+
+
+@app.get("/resources/content")
+async def read_mcp_resource(uri: str):
+    """Read a single MCP resource's content by URI, as returned by GET /resources."""
+    try:
+        result = await app.state.mcp_session.read_resource(AnyUrl(uri))
+    except Exception as err:
+        raise HTTPException(status_code=400, detail=str(err))
+    content = "".join(c.text for c in result.contents if hasattr(c, "text"))
+    return {"uri": uri, "content": content}
+
+
+@app.get("/prompts")
+async def list_mcp_prompts():
+    """Return available MCP prompts."""
+    result = await app.state.mcp_session.list_prompts()
+    return {
+        "prompts": [
+            {
+                "name": p.name,
+                "description": p.description,
+                "arguments": [
+                    {"name": a.name, "description": a.description, "required": a.required}
+                    for a in (p.arguments or [])
+                ],
+            }
+            for p in result.prompts
+        ]
+    }
+
+
+class PromptInvocation(BaseModel):
+    arguments: dict[str, str] = {}
+
+
+@app.post("/prompts/{name}")
+async def invoke_mcp_prompt(name: str, body: PromptInvocation):
+    """Invoke an MCP prompt by name, returning the messages it generates."""
+    try:
+        result = await app.state.mcp_session.get_prompt(name, body.arguments)
+    except Exception as err:
+        raise HTTPException(status_code=400, detail=str(err))
+    return {
+        "description": result.description,
+        "messages": [{"role": m.role, "text": m.content.text} for m in result.messages],
+    }
 
 
 @app.get("/sessions")
