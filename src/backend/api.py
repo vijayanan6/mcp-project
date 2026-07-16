@@ -351,11 +351,22 @@ def _validate_attachment(att: Attachment | None) -> None:
         return
     if att.media_type not in _ATTACHMENT_ALLOWED_TYPES:
         raise HTTPException(400, f"Unsupported attachment type: {att.media_type}")
+    # Strip whitespace/newlines before decoding — standard line-wrapped base64
+    # encoders (Python's base64.encodebytes, the Unix base64 CLI) insert a
+    # newline every 76 chars by default; only the bundled JS client's
+    # single-line FileReader output would otherwise pass validate=True.
+    cleaned = "".join(att.data.split())
+    cap = _MAX_PDF_ATTACHMENT_BYTES if att.media_type == "application/pdf" else _MAX_IMAGE_ATTACHMENT_BYTES
+    if len(cleaned) % 4 == 0:
+        # Exact decoded size derivable from the encoded length alone — reject an
+        # oversized payload before paying the cost of actually decoding it.
+        padding = len(cleaned) - len(cleaned.rstrip("="))
+        if (len(cleaned) * 3) // 4 - padding > cap:
+            raise HTTPException(400, f"Attachment too large (max {cap // (1024 * 1024)}MB for this file type)")
     try:
-        raw = base64.b64decode(att.data, validate=True)
+        raw = base64.b64decode(cleaned, validate=True)
     except Exception:
         raise HTTPException(400, "Attachment data is not valid base64")
-    cap = _MAX_PDF_ATTACHMENT_BYTES if att.media_type == "application/pdf" else _MAX_IMAGE_ATTACHMENT_BYTES
     if len(raw) > cap:
         raise HTTPException(400, f"Attachment too large (max {cap // (1024 * 1024)}MB for this file type)")
 
