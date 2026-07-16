@@ -417,6 +417,19 @@ def _history_text_for(message: str, attachment: Attachment | None) -> str:
     return f"{message}\n\n{marker}" if message else marker
 
 
+def _text_with_citations(block) -> str:
+    """A text content block's text, with inline (p.N) markers appended for each
+    citation carrying a page number. Shared by /chat and /stream so the citation
+    formatting logic (and the flat, non-nested start_page_number field shape —
+    see CLAUDE.md) only exists in one place."""
+    text = block.text
+    for c in (getattr(block, "citations", None) or []):
+        page = getattr(c, "start_page_number", None)
+        if page is not None:
+            text += f" (p.{page})"
+    return text
+
+
 def _safe_window(hist: list, limit: int) -> list:
     """Slice history to limit while never splitting a tool_use/tool_result pair."""
     window = hist[-limit:]
@@ -679,11 +692,7 @@ async def chat(req: ChatRequest):
                     # "Cost by Tool" attributes their fee correctly.
                     tools_used.append(block.name)
                 elif block.type == "text" and block.text:
-                    response_text += block.text
-                    for c in (getattr(block, "citations", None) or []):
-                        page = getattr(c, "start_page_number", None)
-                        if page is not None:
-                            response_text += f" (p.{page})"
+                    response_text += _text_with_citations(block)
     except APIError as err:
         # AsyncAnthropic already retries 429/5xx/timeouts/connection errors internally
         # (exponential backoff + jitter, default max_retries=2) before raising — this
@@ -800,11 +809,7 @@ async def stream_chat(req: ChatRequest):
                         tools_called.append(block.name)
                         yield f"data: {json.dumps({'type': 'tool', 'name': block.name})}\n\n"
                     elif block.type == "text" and block.text:
-                        text_piece = block.text
-                        for c in (getattr(block, "citations", None) or []):
-                            page = getattr(c, "start_page_number", None)
-                            if page is not None:
-                                text_piece += f" (p.{page})"
+                        text_piece = _text_with_citations(block)
                         response_text += text_piece
                         yield f"data: {json.dumps({'type': 'text', 'content': text_piece})}\n\n"
 
