@@ -66,6 +66,26 @@ from database import (
     pricing_warnings_pending, mark_pricing_warning_sent,
 )
 from text_editor_tool import ProjectNotesEditorTool
+from langfuse import Langfuse
+
+# Same optional-feature pattern as DISCORD_WEBHOOK_URL below: fully optional,
+# every call site checks for None and no-ops if tracing isn't configured.
+LANGFUSE_ENABLED = bool(os.environ.get("LANGFUSE_PUBLIC_KEY") and os.environ.get("LANGFUSE_SECRET_KEY"))
+langfuse_client = Langfuse() if LANGFUSE_ENABLED else None
+
+
+def _lf_finish(generation, **update_kwargs) -> None:
+    """End a Langfuse generation span, if tracing is enabled. Never lets a
+    Langfuse SDK failure break the actual chat response — same isolation
+    principle as _run_alert_checks() applies to a third-party integration."""
+    if generation is None:
+        return
+    try:
+        generation.update(**update_kwargs)
+        generation.end()
+    except Exception as e:
+        logger.warning(f"[langfuse] Failed to finish generation span: {e}")
+
 
 DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL")
 ALERT_COOLDOWN = timedelta(hours=24)          # low-balance tiers: min gap between repeat alerts
@@ -292,6 +312,10 @@ async def lifespan(app: FastAPI):
     # or a later crash-recovery reconnect) — AsyncExitStack.aclose() is the
     # counterpart to the enter_async_context() calls in _connect_mcp().
     await app.state._mcp_stack.aclose()
+    # Langfuse batches spans and sends them on a background thread/timer —
+    # without an explicit flush, whatever's still queued at shutdown is lost.
+    if langfuse_client:
+        langfuse_client.flush()
 
 
 # ── App setup ────────────────────────────────────────────────────────────────
@@ -917,6 +941,10 @@ async def chat(req: ChatRequest):
     total_web_searches = 0
     has_usage = False
 
+    generation = langfuse_client.start_observation(
+        as_type="generation", name="chat", model=model, input=message,
+    ) if langfuse_client else None
+
     try:
         async for msg in runner:
             if hasattr(msg, "usage") and msg.usage:
@@ -945,6 +973,7 @@ async def chat(req: ChatRequest):
         # why. Every request will fail this way until the server is restarted.
         await _mcp_crash_detected(err)
         _log_latency("/chat", _start_time, session_id=session_id, outcome="mcp_crash")
+        _lf_finish(generation, level="ERROR", status_message="mcp_crash")
         raise HTTPException(
             status_code=503,
             detail="Lost connection to the tool server. The server needs to be restarted to recover.",
@@ -955,6 +984,7 @@ async def chat(req: ChatRequest):
         # only fires once those retries are exhausted. Never let the raw SDK exception
         # (which can include request internals) reach the client as a raw 500.
         _log_latency("/chat", _start_time, session_id=session_id, outcome=type(err).__name__)
+        _lf_finish(generation, level="ERROR", status_message=type(err).__name__)
         raise HTTPException(
             status_code=503,
             detail=f"Claude API is temporarily unavailable ({type(err).__name__}). Please try again in a moment.",
@@ -969,6 +999,11 @@ async def chat(req: ChatRequest):
         await _run_alert_checks()
 
     latency_ms = _log_latency("/chat", _start_time, session_id=session_id, model=model, outcome="ok")
+    _lf_finish(
+        generation,
+        output=response_text,
+        usage_details={"input": total_input, "output": total_output, "cache_write": total_cache_write, "cache_read": total_cache_read},
+    )
 
     return {
         "session_id": session_id,
@@ -1000,6 +1035,9 @@ async def stream_chat(req: ChatRequest):
     history.append({"role": "user", "content": _history_text_for(message, req.attachment)})
 
     model = _pick_model(message, has_attachment=req.attachment is not None)
+    generation = langfuse_client.start_observation(
+        as_type="generation", name="stream", model=model, input=message,
+    ) if langfuse_client else None
 
     async def generate():
         response_text = ""
@@ -1085,6 +1123,11 @@ async def stream_chat(req: ChatRequest):
                 await _run_alert_checks()
 
             latency_ms = _log_latency("/stream", _start_time, session_id=session_id, model=model, outcome="ok")
+            _lf_finish(
+                generation,
+                output=response_text,
+                usage_details={"input": total_input, "output": total_output, "cache_write": total_cache_write, "cache_read": total_cache_read},
+            )
             done_data = {"type": "done", "session_id": session_id, "model": model, "latency_ms": round(latency_ms, 1)}
             if has_usage:
                 done_data["usage"] = {
@@ -1100,16 +1143,19 @@ async def stream_chat(req: ChatRequest):
             # _mcp_crash_detected()'s docstring for why.
             await _mcp_crash_detected(e)
             _log_latency("/stream", _start_time, session_id=session_id, outcome="mcp_crash")
+            _lf_finish(generation, level="ERROR", status_message="mcp_crash")
             message = "Lost connection to the tool server. The server needs to be restarted to recover."
             yield f"data: {json.dumps({'type': 'error', 'message': message})}\n\n"
         except APIError as e:
             # Same reasoning as /chat: AsyncAnthropic already retried internally before
             # raising, and a raw SDK exception string shouldn't reach the client.
             _log_latency("/stream", _start_time, session_id=session_id, outcome=type(e).__name__)
+            _lf_finish(generation, level="ERROR", status_message=type(e).__name__)
             message = f"Claude API is temporarily unavailable ({type(e).__name__}). Please try again in a moment."
             yield f"data: {json.dumps({'type': 'error', 'message': message})}\n\n"
         except Exception as e:
             _log_latency("/stream", _start_time, session_id=session_id, outcome="unexpected_error")
+            _lf_finish(generation, level="ERROR", status_message="unexpected_error")
             yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
         finally:
             if consumer_task and not consumer_task.done():

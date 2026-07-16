@@ -34,6 +34,7 @@ Last updated: July 2026
 - [x] Error Handling & Resilience — 429 backoff (SDK-native, verified not hand-rolled), clean errors instead of raw 500s/tracebacks, MCP crash detection (manual recovery, automatic reconnect attempted and reverted after live testing), `search_docs` relevance-threshold fallback, circuit breaker pattern understood and deliberately not built (no failure point in this app has the expensive-repeated-call shape it protects against)
 - [x] Security Fundamentals for AI Apps — tool input validation (found 4/5 invalid `search_docs` inputs genuinely crashed the tool before fixing), path traversal defense explained, 2 real raw-error-leak routes found and fixed, OWASP LLM Top 10 mapped against this codebase with honest named gaps (no system-prompt-extraction defense, no RAG faithfulness evals yet)
 - [x] Environment Management — `ENVIRONMENT`-aware `.env` selection and `DB_PATH` (dev's default behavior byte-for-byte unchanged, verified against real data), structural (not just policy) prod/dev data separation, environment-tagged logging
+- [x] Observability & Logging — structured `logging` (console + rotating file), deliberate log levels, request latency tracking, a dedicated `/logs` dashboard (level filters, expandable tracebacks, verified live via Playwright), and real Langfuse tracing (verified genuine end-to-end delivery by fetching a trace back from Langfuse's own servers, not just trusting no local exception was raised)
 
 ### Not Yet Started ❌
 - [ ] pytest — testing framework for MCP tools and FastAPI routes
@@ -167,7 +168,7 @@ Last updated: July 2026
 
 ---
 
-### Observability & Logging (Partially complete ✅)
+### Observability & Logging ✅
 - [x] Track token usage per request — input, cache_write, cache_read, output
 - [x] Track cost per request — estimated USD using pricing table
 - [x] Track tool calls per request — stored as JSON array in usage_logs
@@ -178,7 +179,7 @@ Last updated: July 2026
 - [x] Log every error with full traceback to a log file — `logger.error(..., exc_info=True)`; verified live by killing the MCP subprocess again and confirming a real full traceback landed in `data/app.log`, not just a message
 - [x] Understand DEBUG / INFO / WARNING / ERROR / CRITICAL log levels — applied deliberately per call site, not uniformly: routine startup events are INFO, non-fatal caught failures (a Discord webhook failing, one alert check failing) are WARNING, genuinely unexpected/crash-class failures are ERROR with a traceback
 - [x] Add request latency tracking — how long does each `/stream` call take? — a shared `_log_latency()` helper logs elapsed ms at *every* exit point of both `/chat` and `/stream` (success and every failure path alike, since latency on a failing request matters too), and surfaces it in the response body / `done` SSE event
-- [ ] Explore Langfuse free tier — trace every Claude API call end to end
+- [x] Explore Langfuse free tier — trace every Claude API call end to end. Verified the current SDK (v4, OpenTelemetry-based — a major rework from the decorator-less v2/v3 API most tutorials still describe) via context7 before writing any integration code. `/chat` and `/stream` each open a `generation` span around the `tool_runner` call, closed at every exit point (success and every failure path) via a shared `_lf_finish()` helper — same isolation principle as Discord alerting: optional (no-ops if `LANGFUSE_PUBLIC_KEY`/`SECRET_KEY` aren't set), and a tracing failure never breaks the real chat response. Verified genuine end-to-end delivery, not just "no local exception" — created a real trace, flushed it, then fetched it back from Langfuse's actual servers via their read API to confirm it truly arrived.
 
 **Success check:** Every request and error is logged with structured fields. Langfuse shows token usage and latency per conversation turn
 
