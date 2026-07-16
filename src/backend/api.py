@@ -500,6 +500,21 @@ async def logs_data(level: str | None = None, limit: int = 200):
     return {"entries": entries[:limit], "counts": counts, "environment": ENVIRONMENT}
 
 
+@app.get("/logs/conversations")
+async def logs_conversations(limit: int = 20):
+    """Return recent sessions with their full message history, newest first.
+    Reads directly from the sessions table (already the source of truth for
+    conversation content via session_get()/session_save()) rather than a
+    second, denormalized copy — one system of record, no drift risk if a
+    session is ever deleted."""
+    sessions = session_list()[:limit]
+    conversations = [
+        {"session_id": s["session_id"], "updated_at": s["updated_at"], "messages": session_get(s["session_id"])}
+        for s in sessions
+    ]
+    return {"conversations": conversations}
+
+
 class CreditRequest(BaseModel):
     starting_balance: float
     alert_threshold: float = 1.0

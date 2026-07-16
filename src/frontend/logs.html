@@ -44,6 +44,25 @@
     .entry-tb-toggle { color: #38bdf8; font-size: 0.72rem; cursor: pointer; margin-top: 6px; display: inline-block; }
     .entry-tb { display: none; background: #0f172a; border: 1px solid #334155; border-radius: 8px; padding: 10px 12px; margin-top: 8px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.72rem; color: #fca5a5; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 300px; overflow-y: auto; }
     .entry-tb.open { display: block; }
+
+    .tabs { display: flex; gap: 8px; margin-bottom: 20px; }
+    .tab-btn { background: #1e293b; border: 1px solid #334155; color: #94a3b8; padding: 9px 20px; border-radius: 8px; cursor: pointer; font-size: 0.85rem; font-weight: 600; }
+    .tab-btn.active { background: #38bdf8; border-color: #38bdf8; color: #0f172a; }
+    .tab-panel { display: none; }
+    .tab-panel.active { display: block; }
+
+    .convo { border-bottom: 1px solid #1a2332; padding: 16px 18px; }
+    .convo:last-child { border-bottom: none; }
+    .convo-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 12px; cursor: pointer; }
+    .convo-id { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.75rem; color: #38bdf8; }
+    .convo-time { color: #64748b; font-size: 0.75rem; }
+    .convo-count { color: #64748b; font-size: 0.72rem; margin-left: auto; }
+    .convo-messages { display: none; flex-direction: column; gap: 8px; }
+    .convo-messages.open { display: flex; }
+    .msg { max-width: 85%; padding: 8px 12px; border-radius: 10px; font-size: 0.82rem; white-space: pre-wrap; overflow-wrap: anywhere; }
+    .msg.user { align-self: flex-end; background: #1d4ed8; color: #eff6ff; }
+    .msg.assistant { align-self: flex-start; background: #1e293b; border: 1px solid #334155; color: #cbd5e1; }
+    .msg-role { font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.05em; opacity: 0.65; margin-bottom: 3px; }
   </style>
 </head>
 <body>
@@ -53,34 +72,56 @@
       <h1>Error &amp; Log Viewer</h1>
       <p>Today's <code>data/app.log</code> &nbsp;|&nbsp; <a href="/">Back to Chat</a> &nbsp;|&nbsp; <a href="/usage">Cost Dashboard</a></p>
     </div>
-    <button class="refresh-btn" onclick="load()">Refresh</button>
+    <button class="refresh-btn" onclick="refresh()">Refresh</button>
   </div>
 
-  <div class="grid">
-    <div class="card all active" data-level="" onclick="setFilter('')">
-      <div class="label">All</div>
-      <div class="value" id="count-all">–</div>
+  <div class="tabs">
+    <button class="tab-btn active" data-tab="logs" onclick="setTab('logs')">Logs</button>
+    <button class="tab-btn" data-tab="conversations" onclick="setTab('conversations')">Conversations</button>
+  </div>
+
+  <div id="tab-logs" class="tab-panel active">
+    <div class="grid">
+      <div class="card all active" data-level="" onclick="setFilter('')">
+        <div class="label">All</div>
+        <div class="value" id="count-all">–</div>
+      </div>
+      <div class="card error" data-level="ERROR" onclick="setFilter('ERROR')">
+        <div class="label">Errors</div>
+        <div class="value" id="count-error">–</div>
+      </div>
+      <div class="card warning" data-level="WARNING" onclick="setFilter('WARNING')">
+        <div class="label">Warnings</div>
+        <div class="value" id="count-warning">–</div>
+      </div>
+      <div class="card info" data-level="INFO" onclick="setFilter('INFO')">
+        <div class="label">Info</div>
+        <div class="value" id="count-info">–</div>
+      </div>
     </div>
-    <div class="card error" data-level="ERROR" onclick="setFilter('ERROR')">
-      <div class="label">Errors</div>
-      <div class="value" id="count-error">–</div>
-    </div>
-    <div class="card warning" data-level="WARNING" onclick="setFilter('WARNING')">
-      <div class="label">Warnings</div>
-      <div class="value" id="count-warning">–</div>
-    </div>
-    <div class="card info" data-level="INFO" onclick="setFilter('INFO')">
-      <div class="label">Info</div>
-      <div class="value" id="count-info">–</div>
+
+    <div class="section">
+      <div id="entries"></div>
     </div>
   </div>
 
-  <div class="section">
-    <div id="entries"></div>
+  <div id="tab-conversations" class="tab-panel">
+    <div class="section">
+      <div id="conversations"></div>
+    </div>
   </div>
 
 <script>
   let currentFilter = '';
+  let currentTab = 'logs';
+
+  function setTab(tab) {
+    currentTab = tab;
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
+    document.querySelectorAll('.tab-panel').forEach(p => p.classList.toggle('active', p.id === `tab-${tab}`));
+    if (tab === 'conversations') loadConversations();
+    else load();
+  }
 
   function setFilter(level) {
     currentFilter = level;
@@ -90,6 +131,32 @@
 
   function escapeHtml(s) {
     return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  }
+
+  async function loadConversations() {
+    const data = await fetch('/logs/conversations').then(r => r.json());
+    const container = document.getElementById('conversations');
+    if (!data.conversations.length) {
+      container.innerHTML = '<div class="empty">No conversations yet.</div>';
+      return;
+    }
+    container.innerHTML = data.conversations.map((c, i) => `
+      <div class="convo">
+        <div class="convo-head" onclick="this.nextElementSibling.classList.toggle('open')">
+          <span class="convo-id">${escapeHtml(c.session_id.slice(0, 8))}</span>
+          <span class="convo-time">${escapeHtml(c.updated_at)}</span>
+          <span class="convo-count">${c.messages.length} message${c.messages.length === 1 ? '' : 's'} — click to expand</span>
+        </div>
+        <div class="convo-messages${i === 0 ? ' open' : ''}">
+          ${c.messages.map(m => `
+            <div class="msg ${m.role}">
+              <div class="msg-role">${escapeHtml(m.role)}</div>
+              ${escapeHtml(typeof m.content === 'string' ? m.content : JSON.stringify(m.content))}
+            </div>
+          `).join('')}
+        </div>
+      </div>
+    `).join('');
   }
 
   async function load() {
@@ -126,13 +193,19 @@
     }).join('');
   }
 
+  function refresh() {
+    if (currentTab === 'conversations') loadConversations();
+    else load();
+  }
+
   // Same tab-visibility-aware polling as usage.html — no point re-querying
-  // and re-parsing the log file every 30s for a page nobody's looking at.
+  // and re-parsing the log file (or re-fetching conversations) every 30s for
+  // a page nobody's looking at.
   let pollInterval = null;
 
   function startPolling() {
     if (pollInterval) return;
-    pollInterval = setInterval(load, 30000);
+    pollInterval = setInterval(refresh, 30000);
   }
 
   function stopPolling() {
@@ -144,7 +217,7 @@
     if (document.hidden) {
       stopPolling();
     } else {
-      load();
+      refresh();
       startPolling();
     }
   });
