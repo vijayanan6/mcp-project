@@ -89,6 +89,7 @@ User question → embed → ChromaDB similarity search → top 4 chunks → Clau
 - Auto-indexes on server startup; re-index by chat command
 - Supports `.txt`, `.md`, `.csv`, scanned PDFs (via OCR)
 - Verified — not assumed — the actual ranking mechanism: confirmed the installed ChromaDB defaults to cosine distance for this embedding function, then proved it empirically with the project's own model — two paraphrased sentences sharing zero words scored 0.556 similarity vs. 0.09 for an unrelated pair
+- **Enforced a relevance threshold that had been documented but never applied** — nearest-neighbor search always returns the top N chunks if the collection is non-empty, however weak the actual match, so a genuinely unrelated query was silently handed the 4 least-bad chunks with no signal they weren't a real answer. The code's own docstring had already named the intended cutoff (similarity > 0.2); enforced it, verified against real project data (a real question scored 0.478 and passed, an unrelated one scored 0.123 and correctly fell back to a "no match, here's what's actually available" message)
 
 ---
 
@@ -257,6 +258,8 @@ System prompt cached after message 1 → near-free on every subsequent turn
 
 **A second, different real cost-tracking bug — caught by a specific question about one specific number, not a systematic audit.** Asked what a "code execution" line item on the Cost by Tool table actually represented; live data showed 3 calls costing $0.1510. Traced it to a genuine root cause: the aggregation query exploded each request's `tools_used` JSON array via `json_each()` and summed that request's *total* cost once per array element — so a single $0.0503 request that had called the same tool 3 times had its cost counted 3 times, while the adjacent "calls" figure was already correct (which is exactly what made the wrong number look trustworthy sitting next to it). Fixed by grouping to (request, tool) before aggregating across requests — confirmed the fix was genuinely general, not a narrow patch, when it silently corrected an unrelated tool with the identical pattern in the same pass. Also made a deliberate, explained call *not* to fix: this specific tool has no cost model of its own in the pricing logic, so its historical entries were relabeled to the tool whose cost they actually represented — done in the display query only, leaving the raw historical data in the database untouched and auditable.
 
+**Measured before optimizing, and the measurement overturned the plan.** Asked to make the dashboard "more efficient," the instinct was to add database indexes to the 6-query aggregation behind it. Timed the actual queries first: 2.89ms total at the project's current data volume — not a real bottleneck, so indexes were added anyway as free, forward-looking hygiene but explicitly not framed as fixing anything. The real, measurable waste was somewhere the instinct hadn't looked: the dashboard polled its own endpoint every 30 seconds with zero check for whether the browser tab was even visible, burning a full query round for a view nobody was watching. Fixed with a `visibilitychange` listener and verified live via Playwright — spied on `setInterval`/`clearInterval` directly rather than trusting the code read, confirming exactly one pause call on hide and one resume call on return.
+
 ---
 
 ### 7. Mobile Alerting — Designing for Real Runtime Constraints, Not the Textbook Pattern
@@ -347,6 +350,11 @@ Evals caught two real bugs that manual testing missed:
 - **Indirect prompt injection defense** — identified that `search_docs`/`read_doc` results flow back into Claude's context as `tool_result` blocks, indistinguishable from real instructions unless told otherwise (OWASP's #1 LLM risk, and the standard failure mode for RAG pipelines specifically). Added a `<security>` tag to `SYSTEM_PROMPT` explicitly instructing Claude to treat retrieved document/note content as data, never as commands — verified via the eval suite that the change didn't alter tool-routing behavior
 - **Input sanitization** — `_sanitize_input()` strips control/non-printable characters and caps message length before any user input reaches history or the model, closing off context-window abuse as a separate, cheaper first layer
 - **Caught a stale technique before it shipped** — a planned "response prefilling" approach for structured JSON output turned out to return a hard 400 on this project's own routed model (`claude-sonnet-4-6`); verified live via the Models API that both routed models support `output_config.format` / `client.messages.parse()` instead, and used that as the correct forward path for structured outputs
+- **Path traversal defense, explained down to the mechanism, not just "it's handled"** — a file-reading tool resolves the requested path fully (`.resolve()`, collapsing every `..` and symlink to its real destination) *before* checking whether the result still lives inside the allowed folder, rather than pattern-matching for `".."` in the raw string — a common but bypassable approach. Validating the resolved destination, not the input text, is what makes it robust against encoding tricks or alternate path syntax
+- **Every tool argument now validated, not trusted against its declared schema** — a JSON Schema is a description for the model, not an enforcement mechanism; live-tested a tool's numeric argument with negative, zero, wrong-type, and out-of-range values and found 4 of 5 crashed the tool outright before adding real type/bounds checks
+- **Two real information-disclosure leaks found and fixed** — two routes were forwarding any caught exception's raw text straight to the client, a direct OWASP LLM02 (Sensitive Information Disclosure) violation. Fixed by distinguishing exceptions carrying safe, deliberately-worded messages from genuinely unexpected ones (which now get a generic message client-side while the real error is still logged server-side for debugging) — catching, in the process, a wrong first assumption about which exception type actually crosses a subprocess boundary (see section 18)
+- **Mapped the OWASP Top 10 for LLM Applications against this codebase specifically, with honest gaps named, not a checklist claiming full coverage** — strong, concrete coverage on Prompt Injection (LLM01, above), Excessive Agency (LLM06 — every tool is scoped to the minimum it needs, e.g. the text editor tool locked to exactly one file), and Unbounded Consumption (LLM10 — the entire cost dashboard plus every input-length/bounds cap in this project); named, real gaps on System Prompt Leakage (LLM07 — no extraction defense) and Misinformation (LLM09 — no RAG faithfulness evals yet, already tracked as forward-looking work)
+- **Circuit breaker pattern — understood and deliberately not built, with the reasoning made explicit** — a circuit breaker protects against expensive, repeated calls to an already-struggling dependency under real concurrent load; neither failure point in this app has that shape (an MCP crash fails near-instantly with no timeout to skip, and a single local user generates no concurrent-traffic storm for a breaker to protect against). Knowing when a well-known resilience pattern doesn't apply to your actual system is the same skill as knowing when it does
 
 ---
 
@@ -480,6 +488,24 @@ except (anyio.ClosedResourceError, anyio.BrokenResourceError) as err:
 - **A wrong assumption about exception types, caught before shipping** — assumed an error raised inside a separate subprocess would cross the client/server boundary as the same Python exception type it was raised as; live testing showed it arrives reconstructed as a different type entirely, since two OS processes can only communicate via a serialized protocol response, not a shared exception object. Shipped the corrected version, not the first assumption
 
 **Why this matters:** every item here started with a plan that looked reasonable and got revised — sometimes toward more code (the crash detection needed a real fix, not just documentation), sometimes toward less (the "correct" reconnect architecture, once tested, wasn't worth building here). The discipline isn't "always add resilience" or "always keep it simple" — it's treating both directions as claims to test, not defaults to reach for.
+
+---
+
+### 19. Environment Management — Structural Isolation, Not a Policy to Remember
+
+Added `ENVIRONMENT`-aware configuration so dev, and any future non-dev environment, can never collide — designed and verified so the change was zero-risk to the project's own real, months-old data.
+
+```python
+# database.py — the default environment keeps the exact existing filename,
+# so current local data is never silently orphaned by this change
+_db_filename = "data.db" if ENVIRONMENT == "development" else f"data.{ENVIRONMENT}.db"
+DB_PATH = Path(__file__).parent.parent.parent / "data" / _db_filename
+```
+
+- **"Never use prod data/credentials in dev" turned from a policy into a structural guarantee** — dev and any other environment now resolve to genuinely different `.env` files and genuinely different SQLite database files by construction; there's no code path where they could ever collide, so the rule doesn't depend on anyone remembering to follow it
+- **Verified the risky part before trusting it** — a change to the primary database file path is exactly the kind of edit that can silently orphan real data. Verified live, not assumed: confirmed the default (unset `ENVIRONMENT`) path was byte-for-byte identical to the project's prior behavior, confirmed the real `.env` still loaded the real API key, and confirmed the real historical database (83 real logged requests, real cost totals) was fully intact after the change — before considering it done
+- **Tested the actual switching behavior with a real file, not a mocked one** — created a genuine temporary `.env.production` with a distinct fake key, confirmed `ENVIRONMENT=production` picked it up instead of the real key, then deleted the test file and confirmed the deletion — and separately confirmed that setting `ENVIRONMENT=production` with *no* matching file present falls back to the plain `.env` rather than silently starting with zero configuration
+- **Understands the relationship between env vars and a real secrets manager, not just that both exist** — an environment variable is just what an application reads; a tool like GCP Secret Manager doesn't replace that; it *injects* the value securely at deploy time (access control, rotation, an audit log of every read) instead of the secret living in a plaintext file. Correctly scoped as forward-looking (this project has no real deployment yet) rather than built prematurely
 
 ---
 
