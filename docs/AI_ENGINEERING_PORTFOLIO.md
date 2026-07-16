@@ -565,7 +565,9 @@ This entire project was built using **Claude Code** as an AI-powered development
 | **`/verify`** | Confirm a change works in the running app, not just in tests |
 | **`/simplify`** | Audit changed code for reuse, efficiency, and unnecessary complexity |
 | **`/security-review`** | Review pending changes for OWASP-level vulnerabilities |
-| **MCP servers** | Evaluated and wired up Playwright MCP (Microsoft's official browser-automation server) at project scope — assessed publisher trust, access boundary, and prompt-injection risk before installing, then used it to drive the chat UI and cost dashboard end-to-end, which caught a real `.env` encoding bug (UTF-8 BOM silently breaking API auth) that code review alone had missed |
+| **MCP servers — Playwright** | Evaluated and wired up Playwright MCP (Microsoft's official browser-automation server) at project scope — assessed publisher trust, access boundary, and prompt-injection risk before installing, then used it to drive the chat UI and cost dashboard end-to-end, which caught a real `.env` encoding bug (UTF-8 BOM silently breaking API auth) that code review alone had missed |
+| **MCP servers — context7** | Wired up as a standing instruction to pull *current* library/SDK docs before writing integration code, instead of trusting training data that can be stale — this is what caught that the Langfuse SDK had gone through a major v3→v4 rework most tutorials still don't reflect (see section 20) before any integration code was written, not after debugging a mismatch |
+| **MCP servers — Obsidian** | Used to give Claude Code durable memory *outside* the chat context window — real session summaries logged to an external knowledge vault after each work session, so project history survives context compaction and a new session can pick up exactly where the last one left off, instead of re-deriving state from git log and guesswork |
 | **Hooks** | Automate lifecycle actions (PreToolUse, PostToolUse, SessionStart) |
 | **Skills** | Custom slash commands for project-specific workflows |
 | **Memory system** | Persistent context across sessions — project state, preferences, learning path |
