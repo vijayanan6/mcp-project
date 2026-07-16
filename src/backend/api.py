@@ -816,5 +816,11 @@ async def stream_chat(req: ChatRequest):
         finally:
             if consumer_task and not consumer_task.done():
                 consumer_task.cancel()
+                try:
+                    await consumer_task
+                except asyncio.CancelledError:
+                    # Expected: awaiting a task right after cancelling it raises
+                    # CancelledError in the awaiter. Swallow it so cleanup doesn't crash.
+                    pass
 
     return StreamingResponse(generate(), media_type="text/event-stream")
