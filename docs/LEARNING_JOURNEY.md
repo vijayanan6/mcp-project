@@ -1109,6 +1109,37 @@ Closed out four full sections of `LEARNING_PLAN.md` end to end — Error Handlin
 
 ---
 
+## Phase 27 — Real Observability (Logging, Latency, Tracing), a Production-Breaking Bug in Shipped Code, and Listening to "This Is Confusing"
+
+### What We Built
+Closed out Observability & Logging entirely: structured Python `logging` (console + rotating file) replacing the day's earlier ad-hoc `print()` wrapper, request latency tracking, a dedicated `/logs` dashboard for browsing errors and warnings, real Langfuse tracing for every Claude API call — and then, prompted by a direct piece of user feedback ("Langfuse's dashboard is confusing, mine is clearer"), a Conversations tab added to that same `/logs` page instead of accepting the third-party tool's UI as the answer. In the middle of all of it, a real production bug reached the user for the first time this session — not caught by any of today's extensive testing — and got root-caused, fixed, and verified for real.
+
+### Key Concepts Learned
+
+**Cost-conscious testing has a real blind spot: bugs that only exist at the level of a whole function's execution.** Today's testing strategy deliberately avoided real Anthropic API calls wherever possible — verifying pieces in isolation (a helper function here, a database query there) instead. That strategy is sound for most bug classes, but it has a hole: Python decides whether a name is local to a function by scanning the *entire* function body for any assignment to it, regardless of source order or whether that branch ever executes. Two `except` blocks inside `/stream`'s `generate()` reassigned a variable named `message` for error text — shadowing the *outer* `message` (the user's actual chat text) read earlier in the same function. This made `UnboundLocalError` fire on literally every single `/stream` call, unconditionally, before any Claude API call was even attempted — and no syntax check, no isolated unit test, and no amount of testing individual pieces could have caught it, because the bug only exists in the shape of the whole function executing start to finish. It took a real user hitting it to surface it. The generalizable lesson: verifying pieces in isolation is real risk-reduction, not risk-elimination — some bug classes are only visible when you run the whole thing.
+
+**A production bug is still just a bug — root-cause it the same way regardless of how it was found.** The fix itself followed the same discipline as everything else today: find the exact mechanism (Python's whole-function local-variable scoping, not "something's wrong with message handling"), fix precisely (rename the two shadowing reassignments, touch nothing else), and verify with a real end-to-end call rather than trusting the syntax check. That real verification call itself then surfaced a smaller, second mistake — a reflexive test-cleanup deletion that removed a `usage_logs` row representing *real* spend, not the fake test data the same cleanup pattern had safely removed all day — caught and corrected immediately by asking "does this row represent real cost or fake test data" before deleting, not after.
+
+**Verify a fast-moving library's current API shape before writing against it, not just its existence.** Before wiring up Langfuse, checked its Python SDK docs via context7 rather than writing against a remembered API shape — good thing, since the SDK went through a major v3→v4 rework (now OpenTelemetry-based, `start_observation()`/`start_as_current_observation()` instead of the decorator-only or manual `trace()`/`generation()` context-manager APIs most existing tutorials and blog posts still describe). Writing against the remembered shape would have shipped code against an API that no longer exists.
+
+**A dependency conflict warning is a hypothesis about your specific code, not a verdict.** Installing `langfuse` bumped shared `opentelemetry-*` packages past what `chromadb` pins, on a Python environment that isn't a dedicated per-project virtualenv. Rather than either ignoring the pip warning or treating it as an automatic failure, tested the actual code path this project depends on (ChromaDB search, and a full app restart exercising the indexing path) and confirmed both still worked — the same "check whether *this* code exercises the affected path" discipline already applied to CVE scanner output earlier in this project's history (Insight #30), now applied to a same-day dependency version conflict instead of a security advisory.
+
+**"No local exception was raised" and "the data actually arrived" are different claims — verify the one that matters.** Confirming Langfuse tracing worked didn't stop at "the SDK call didn't throw." Created a real trace, flushed it, then fetched it back from Langfuse's own servers via their read API to confirm genuine end-to-end delivery. A silently-swallowed failure (bad key, network issue, wrong project) would have looked identical to success under the weaker check.
+
+**When a user says a tool is confusing, the fix isn't necessarily to explain the tool better.** Told that Langfuse's dashboard was confusing compared to this project's own purpose-built `/usage` and `/logs` pages, the honest answer wasn't to defend Langfuse's UI or walk through how to use it — it was to identify the one real thing it showed that the custom dashboards didn't (actual conversation content, not just metadata), and close that specific gap in the tool the user already found clear. First design for that (denormalizing message/response text onto `usage_logs`) was reconsidered and reverted before writing any code, once it became clear it would duplicate data already living correctly in the `sessions` table — a smaller, better design (reading `sessions` directly) replaced it with zero schema changes and zero drift risk.
+
+### Before vs After
+| | Before | After |
+|---|---|---|
+| Logging | Ad-hoc `_log()` wrapper around `print()`, no file output, unbounded growth if it had one | Real `logging` module, console + rotating file (14-day retention), deliberate levels per call site |
+| Error visibility | Console output only, gone once the terminal scrolled or closed | `data/app.log` + a dedicated `/logs` dashboard with click-to-filter and expandable tracebacks |
+| Request latency | Not tracked at all | Logged and surfaced in the response at every exit point of `/chat` and `/stream`, success and failure alike |
+| Claude API tracing | None | Real Langfuse tracing, verified via genuine round-trip delivery, not just local success |
+| `/stream` reliability | Crashed on every single call due to a variable-shadowing `UnboundLocalError` (undetected all session) | Fixed, verified with a real end-to-end call |
+| Seeing actual conversation content | Only via Langfuse's dashboard (found confusing) | A Conversations tab on the project's own `/logs` page, reading directly from existing data |
+
+---
+
 ## Final Architecture
 
 ```

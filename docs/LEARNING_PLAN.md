@@ -43,7 +43,7 @@ Last updated: July 2026
 - [ ] React frontend
 - [ ] PostgreSQL
 - [ ] Authentication (JWT / Firebase)
-- [ ] Advanced AI engineering (Langfuse, LangChain)
+- [ ] Advanced AI engineering (LangChain) — Langfuse is done, see Observability & Logging above
 
 ---
 

@@ -65,11 +65,12 @@ The entry point for the web application. Built with FastAPI.
 - Streams Claude's responses back in real time using Server-Sent Events
 - Stores and retrieves conversation history from SQLite
 - Auto-indexes documents into ChromaDB on startup
-- Exposes endpoints: `/`, `/chat`, `/stream`, `/tools`, `/resources`, `/resources/content`, `/prompts`, `/attachment-limits`, `/sessions`, `/usage`, `/usage/data`, `/usage/credit`
+- Exposes endpoints: `/`, `/chat`, `/stream`, `/tools`, `/resources`, `/resources/content`, `/prompts`, `/attachment-limits`, `/sessions`, `/usage`, `/usage/data`, `/usage/credit`, `/logs`, `/logs/data`, `/logs/conversations`
 - Routes each message to Haiku or Sonnet via `_pick_model()` based on complexity
 - Accepts one optional image/PDF attachment per turn (`ChatRequest.attachment`) — sent to Claude for that turn only, never persisted (see "Image + PDF Attachments" below)
 - Runs `_run_alert_checks()` after every logged request — pushes Discord mobile alerts (low-balance warning/critical, spend spike, web_search budget, daily digest) when `DISCORD_WEBHOOK_URL` is configured; see `CLAUDE.md` § Discord Mobile Alerts
 - Logs token usage and tool calls to SQLite after every response via `usage_log()`
+- Structured logging via Python's `logging` module (console + rotating `data/app.log`), request latency tracking at every exit point of `/chat`/`/stream`, and optional Langfuse tracing of every Claude API call — see "Logging & Tracing" below
 
 ### mcp_server.py — MCP Server
 The tool engine. Has no knowledge of Claude, HTTP, or the browser.
@@ -133,6 +134,13 @@ Visual observability dashboard at `/usage`.
 - Cost by Project table — multi-project breakdown with filter dropdown
 - Claude API Credit Tracker — starting balance, progress bar, burn rate, days remaining
 - Cost Forecast — 30/60/90 day projected spend based on current burn rate
+
+### logs.html — Error & Log Viewer
+Dashboard at `/logs`, two tabs.
+
+- **Logs tab** — click-to-filter summary cards (All/Error/Warning/Info) backed by `GET /logs/data`, which parses `data/app.log` into structured entries; errors have an expandable "Show traceback" toggle
+- **Conversations tab** — backed by `GET /logs/conversations`, reads directly from the `sessions` table (no separate storage) and renders each session as an expandable chat-transcript card, user/assistant bubbles, most recent open by default. Added specifically because Langfuse's own dashboard UI was found confusing compared to this project's purpose-built ones — this closes the one real gap (seeing actual conversation content, not just cost/token metadata) without needing to open a third-party UI at all
+- Same tab-visibility-aware polling as `usage.html`
 
 ### convert_pdfs.py — PDF Converter
 Standalone script for converting scanned PDFs to readable text.
@@ -344,6 +352,37 @@ They are local only and rebuilt automatically when the app starts.
 
 ---
 
+## Logging & Tracing
+
+Three layers, each answering a different question about what the app is doing.
+
+```
+Structured logging (always on)
+  api.py's `logger` (Python's logging module)
+    ├──► Console — level scales with ENVIRONMENT (DEBUG in dev, INFO elsewhere)
+    └──► data/app.log — always INFO+, rotates at midnight, 14-day retention
+              │
+              ▼
+        GET /logs/data → logs.html's Logs tab
+        (parsed entries, click-to-filter by level, expandable tracebacks)
+
+Request latency (always on)
+  _log_latency() logged at every /chat and /stream exit point — success
+  and every failure path alike — surfaced in the response / `done` event
+
+Claude API tracing (optional — needs LANGFUSE_PUBLIC_KEY/SECRET_KEY)
+  /chat and /stream each open a Langfuse "generation" span (model, input)
+  around the tool_runner call, closed at every exit point via _lf_finish()
+    → traces visible at cloud.langfuse.com
+    → a Langfuse SDK failure never breaks the actual chat response
+```
+
+**Conversation content** (what was actually said, not just cost/token metadata) lives in the existing `sessions` table and is surfaced by `GET /logs/conversations` → logs.html's Conversations tab — added after Langfuse's own dashboard UI was found confusing; this closes that one real gap without needing a third-party UI or any new storage (`sessions` was already the source of truth).
+
+See `CLAUDE.md` § Logging & Tracing for the full design reasoning, including why the SDK's current API (`start_observation()`, OpenTelemetry-based) differs from what most Langfuse tutorials describe, and the real dependency-conflict finding from installing it.
+
+---
+
 ## PDF Processing Flow
 
 Scanned PDFs (images of pages, no text layer) require a separate
@@ -452,7 +491,8 @@ relative to `input` means prompt caching is working correctly.
 | PDF (text) | pypdf | Lightweight PDF text extraction |
 | PDF (scanned) | pymupdf + Tesseract | Render pages → OCR → text |
 | Version Control | Git + GitHub | Code history and backup |
-| UI Testing | Playwright MCP | Drives chat.html/usage.html in a real browser via Claude Code |
+| UI Testing | Playwright MCP | Drives chat.html/usage.html/logs.html in a real browser via Claude Code |
+| LLM Tracing | Langfuse (optional) | End-to-end tracing of every Claude API call, free tier |
 | Language | Python 3.12 | Everything |
 
 ---
@@ -472,7 +512,8 @@ MCP Project/
 │   │   └── rag.py              ChromaDB helpers — chunk, embed, index, search
 │   └── frontend/
 │       ├── chat.html       Browser chat UI — SSE streaming, session storage, credit alert badge
-│       └── usage.html      AI Cost Dashboard — token breakdown, credit tracker, tool costs, project filter
+│       ├── usage.html      AI Cost Dashboard — token breakdown, credit tracker, tool costs, project filter
+│       └── logs.html       Error/Log Viewer — filterable log entries + a Conversations tab
 │
 ├── scripts/
 │   ├── convert_pdfs.py     PDF OCR — pymupdf + Tesseract → txt

@@ -204,6 +204,24 @@ flat-fee product). See `CLAUDE.md` for the full feature list and multi-project s
 
 ---
 
+## Logging, Errors & Tracing
+
+Visit **`/logs`** for two tabs:
+- **Logs** — errors/warnings/info parsed from `data/app.log`, click-to-filter summary cards, expandable full tracebacks
+- **Conversations** — the actual content of recent chats (not just cost/token metadata), reading directly from the existing session history
+
+Structured logging (Python's `logging` module) writes to both the console and a rotating `data/app.log`
+(14-day retention). Request latency is tracked at every `/chat`/`/stream` exit point, success and
+failure alike.
+
+**Optional: Langfuse tracing.** Set `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` in `.env`
+(free tier at [cloud.langfuse.com](https://cloud.langfuse.com)) to get full end-to-end tracing of
+every Claude API call, viewable in Langfuse's own dashboard. Fully optional — every call site
+no-ops cleanly if unset, same pattern as the Discord webhook. See `CLAUDE.md` § Logging & Tracing
+for the full design.
+
+---
+
 ## Model Routing & Prompt Caching
 
 Not every message needs the same model. `_pick_model()` routes short/simple queries to

@@ -35,6 +35,10 @@ api.py (FastAPI web server)
   │
   ├──► Discord webhook (mobile alerts — low balance ×2, spend spike, tool budget, daily digest, missing pricing data)
   │
+  ├──► logging (console + rotating data/app.log) + Langfuse tracing (optional) → /logs dashboard
+  │         (Logs tab: errors/warnings/info, filterable, expandable tracebacks
+  │          Conversations tab: real chat content, reads sessions table directly — no new storage)
+  │
   └──► agent.py (original CLI — still works)
 ```
 
@@ -172,6 +176,36 @@ Messages API content-block feature, not one of the 10 tools above.
     because a human looked closely at one specific dashboard number and asked "why is this exactly
     3x a plausible amount"
 
+### Testing Blind Spots & Production Bugs
+43. Python decides whether a name is local to a function by scanning the *entire* function body
+    for any assignment to it, regardless of source order or which branch runs — reassigning a
+    variable inside an `except` block that might never execute can still break every earlier read
+    of that name in the same function with `UnboundLocalError`
+44. Verifying pieces in isolation (to avoid spending real API credits) reduces risk, it doesn't
+    eliminate it — some bug classes (like #43) only exist in the shape of a whole function
+    executing start to finish, and are invisible to any test that only exercises a fragment
+45. Not all test cleanup is the same — deleting a fake test row (an obviously-fake model name, a
+    "-do-not-keep" session) is safe; deleting a row representing genuinely-incurred API cost is
+    not, even if it was created *during* a test. Check which kind before deleting either one
+
+### Verifying Third-Party Libraries & Feedback
+46. A fast-moving library's API can change shape entirely between when you learned it and when
+    you use it — checked Langfuse's current SDK docs before writing any code and found a major
+    v3→v4 rework (OpenTelemetry-based now), avoiding writing against a remembered API that no
+    longer exists
+47. A pip dependency-conflict warning is a hypothesis about your specific code, not an automatic
+    verdict — tested the actual code path a conflicting shared dependency affects (ChromaDB
+    search, full app startup) and confirmed nothing broke, rather than either ignoring the warning
+    or treating it as a failure on faith
+48. "No exception was raised" and "the data actually arrived" are different claims for anything
+    with a network round-trip — proved real Langfuse delivery by fetching a trace back from their
+    servers, not just trusting that a local SDK call not throwing meant success
+49. When a user says a tool is confusing, the fix isn't to explain the tool better — it's to find
+    the one specific thing it does that your own tooling doesn't, and close exactly that gap. The
+    first design for that (duplicating conversation content onto a cost-tracking table) was
+    reconsidered and replaced with a smaller one (reading the existing sessions table directly)
+    once it was clear the first would create two copies of the same data that could drift apart
+
 ---
 
 ## Tech Stack
@@ -190,6 +224,8 @@ Messages API content-block feature, not one of the 10 tools above.
 | PDF Text | pypdf |
 | PDF OCR | pymupdf + Tesseract |
 | Mobile Alerts | Discord webhooks |
+| Logging | Python `logging` (console + rotating file) |
+| LLM Tracing | Langfuse (optional, free tier) |
 | UI Testing | Playwright MCP |
 | Version Control | Git + GitHub (SSH-signed commits, gitleaks pre-commit hook) |
 | Language | Python 3.12 |
@@ -208,6 +244,7 @@ Messages API content-block feature, not one of the 10 tools above.
 | `src/backend/text_editor_tool.py` | Client-side tool, locked to this file only |
 | `src/frontend/chat.html` | Browser chat UI (SSE streaming, 📎 attachments, credit alert badge) |
 | `src/frontend/usage.html` | AI Cost Dashboard |
+| `src/frontend/logs.html` | Error/Log Viewer + Conversations tab |
 | `scripts/convert_pdfs.py` | Tesseract OCR for scanned PDFs |
 | `scripts/inspect_db.py` | Utility to view SQLite contents |
 | `scripts/tool_use_demo.py` | Tool Use Fundamentals demo — raw SDK, no `tool_runner` |
@@ -226,7 +263,7 @@ ANTHROPIC_API_KEY=sk-ant-...
 # Start the web app — from the project root
 python -m uvicorn api:app --reload --port 8000 --app-dir src/backend
 
-# Open browser at http://localhost:8000 (chat) or http://localhost:8000/usage (cost dashboard)
+# Open browser at http://localhost:8000 (chat), /usage (cost dashboard), or /logs (errors + conversations)
 ```
 
 ---
@@ -237,10 +274,8 @@ python -m uvicorn api:app --reload --port 8000 --app-dir src/backend
 ---
 
 ## Next Steps to Explore
-- Remaining Observability & Logging items: structured Python `logging` (replacing ad-hoc
-  `print()`/`_log()`), full tracebacks logged to a file, request latency tracking, Langfuse
-  free-tier tracing
-- Testing with pytest — currently 0/8, fully unstarted
+- Testing with pytest — currently 0/8, fully unstarted (next section in the Learning Plan)
+- Rate Limiting & API Quota Handling — 0/5, unstarted
 - Replace mock weather with real OpenWeatherMap API
 - Add user authentication (JWT tokens)
 - Switch from SQLite to PostgreSQL
