@@ -397,7 +397,12 @@ def _history_text_for(message: str, attachment: Attachment | None) -> str:
     A lightweight marker notes an attachment existed, without storing the binary."""
     if attachment is None:
         return message
-    marker = f"[User attached a file: {attachment.filename or attachment.media_type}]"
+    # filename is documented as display-only and deliberately unvalidated by
+    # _validate_attachment() — but it still lands in persisted history and gets
+    # resent to Claude as ordinary text on later turns, so it must go through the
+    # same sanitization/length cap as any other user-controlled text before that.
+    safe_name = _sanitize_input(attachment.filename) if attachment.filename else ""
+    marker = f"[User attached a file: {safe_name or attachment.media_type}]"
     return f"{message}\n\n{marker}" if message else marker
 
 # Keywords that indicate doc/note/complex queries → use Sonnet
