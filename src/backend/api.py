@@ -19,7 +19,9 @@ import asyncio
 import base64
 import json
 import logging
+import logging.handlers
 import os
+import re
 import sys
 import time
 import uuid
@@ -99,7 +101,13 @@ _console_handler.setLevel(logging.DEBUG if ENVIRONMENT == "development" else log
 _console_handler.setFormatter(_log_formatter)
 logger.addHandler(_console_handler)
 
-_file_handler = logging.FileHandler(_LOG_FILE, encoding="utf-8")
+# Rotates at midnight, keeps 14 days of history (app.log.2026-07-16, etc.),
+# then deletes anything older automatically — a personal local tool has no
+# use for logs going back further than that, and unbounded growth was the
+# one real gap in the plain FileHandler this replaces.
+_file_handler = logging.handlers.TimedRotatingFileHandler(
+    _LOG_FILE, when="midnight", backupCount=14, encoding="utf-8"
+)
 _file_handler.setLevel(logging.INFO)
 _file_handler.setFormatter(_log_formatter)
 logger.addHandler(_file_handler)
@@ -115,6 +123,37 @@ def _log_latency(route: str, start_time: float, **fields) -> float:
     extra = " ".join(f"{k}={v}" for k, v in fields.items())
     logger.info(f"[latency] {route} {extra} {elapsed_ms:.0f}ms")
     return elapsed_ms
+
+
+# Matches "2026-07-16 15:48:58 [development] ERROR    message text" — the
+# start of a genuine log entry. Any line that doesn't match (a traceback
+# continuation line, which logging appends raw with no prefix of its own) is
+# folded into the traceback of whichever entry came before it.
+_LOG_LINE_RE = re.compile(r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}) \[(\w+)\] (\w+)\s+(.*)$")
+
+
+def _parse_log_file(path: Path) -> list[dict]:
+    """Parse the current log file into structured entries, newest first."""
+    if not path.exists():
+        return []
+    entries = []
+    current = None
+    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        m = _LOG_LINE_RE.match(line)
+        if m:
+            if current is not None:
+                entries.append(current)
+            timestamp, env, level, message = m.groups()
+            current = {
+                "timestamp": timestamp, "environment": env, "level": level.strip(),
+                "message": message, "traceback": "",
+            }
+        elif current is not None:
+            current["traceback"] += line + "\n"
+    if current is not None:
+        entries.append(current)
+    entries.reverse()
+    return entries
 
 
 # ── MCP connection: startup and crash recovery share this ────────────────────
@@ -411,6 +450,30 @@ async def usage_data(project: str = None):
     data = usage_summary(project=project)
     data["credit"] = credit_status(project=project)
     return data
+
+
+@app.get("/logs", response_class=HTMLResponse)
+async def logs_dashboard():
+    """Serve the log viewer UI."""
+    html = Path(__file__).parent.parent / "frontend" / "logs.html"
+    return HTMLResponse(html.read_text(encoding="utf-8"))
+
+
+@app.get("/logs/data")
+async def logs_data(level: str | None = None, limit: int = 200):
+    """Return recent parsed log entries as JSON, optionally filtered by level.
+    Only reads today's log file (data/app.log) — rotation moves prior days to
+    dated backup files, out of scope for this live-tail view."""
+    all_entries = _parse_log_file(_LOG_FILE)
+    counts = {"ERROR": 0, "WARNING": 0, "INFO": 0}
+    for e in all_entries:
+        if e["level"] in counts:
+            counts[e["level"]] += 1
+
+    entries = all_entries
+    if level:
+        entries = [e for e in entries if e["level"] == level.upper()]
+    return {"entries": entries[:limit], "counts": counts, "environment": ENVIRONMENT}
 
 
 class CreditRequest(BaseModel):

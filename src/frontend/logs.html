@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Error &amp; Log Viewer</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #0f172a; color: #e2e8f0; min-height: 100vh; padding: 28px 24px; }
+
+    .header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 24px; flex-wrap: wrap; gap: 12px; }
+    .header-left h1 { font-size: 1.4rem; font-weight: 700; color: #f8fafc; }
+    .header-left p { color: #64748b; font-size: 0.8rem; margin-top: 2px; }
+    .header-left p a { color: #38bdf8; text-decoration: none; }
+    .refresh-btn { background: #1e293b; border: 1px solid #334155; color: #cbd5e1; padding: 8px 18px; border-radius: 8px; cursor: pointer; font-size: 0.82rem; }
+    .refresh-btn:hover { background: #334155; }
+
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 14px; margin-bottom: 22px; }
+    .card { background: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 16px 20px; cursor: pointer; position: relative; overflow: hidden; transition: border-color 0.15s ease; }
+    .card::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px; }
+    .card.all::before { background: #38bdf8; }
+    .card.error::before { background: #ef4444; }
+    .card.warning::before { background: #fbbf24; }
+    .card.info::before { background: #34d399; }
+    .card.active { border-color: #64748b; }
+    .card .label { font-size: 0.72rem; color: #64748b; text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 8px; }
+    .card .value { font-size: 1.7rem; font-weight: 700; color: #f8fafc; line-height: 1; }
+    .card.error .value { color: #ef4444; }
+    .card.warning .value { color: #fbbf24; }
+    .card.info .value { color: #34d399; }
+
+    .section { background: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 10px; }
+    .empty { color: #64748b; font-size: 0.85rem; text-align: center; padding: 40px 20px; }
+
+    .entry { border-bottom: 1px solid #1a2332; padding: 12px 14px; font-size: 0.82rem; }
+    .entry:last-child { border-bottom: none; }
+    .entry-head { display: flex; align-items: baseline; gap: 10px; cursor: default; }
+    .entry-time { color: #64748b; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.75rem; white-space: nowrap; }
+    .entry-level { font-weight: 700; font-size: 0.7rem; text-transform: uppercase; padding: 2px 8px; border-radius: 9999px; white-space: nowrap; }
+    .entry-level.ERROR { background: #3f1414; color: #f87171; }
+    .entry-level.WARNING { background: #3f2f0a; color: #fbbf24; }
+    .entry-level.INFO { background: #0f2e22; color: #34d399; }
+    .entry-msg { color: #cbd5e1; overflow-wrap: anywhere; }
+    .entry-tb-toggle { color: #38bdf8; font-size: 0.72rem; cursor: pointer; margin-top: 6px; display: inline-block; }
+    .entry-tb { display: none; background: #0f172a; border: 1px solid #334155; border-radius: 8px; padding: 10px 12px; margin-top: 8px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.72rem; color: #fca5a5; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 300px; overflow-y: auto; }
+    .entry-tb.open { display: block; }
+  </style>
+</head>
+<body>
+
+  <div class="header">
+    <div class="header-left">
+      <h1>Error &amp; Log Viewer</h1>
+      <p>Today's <code>data/app.log</code> &nbsp;|&nbsp; <a href="/">Back to Chat</a> &nbsp;|&nbsp; <a href="/usage">Cost Dashboard</a></p>
+    </div>
+    <button class="refresh-btn" onclick="load()">Refresh</button>
+  </div>
+
+  <div class="grid">
+    <div class="card all active" data-level="" onclick="setFilter('')">
+      <div class="label">All</div>
+      <div class="value" id="count-all">–</div>
+    </div>
+    <div class="card error" data-level="ERROR" onclick="setFilter('ERROR')">
+      <div class="label">Errors</div>
+      <div class="value" id="count-error">–</div>
+    </div>
+    <div class="card warning" data-level="WARNING" onclick="setFilter('WARNING')">
+      <div class="label">Warnings</div>
+      <div class="value" id="count-warning">–</div>
+    </div>
+    <div class="card info" data-level="INFO" onclick="setFilter('INFO')">
+      <div class="label">Info</div>
+      <div class="value" id="count-info">–</div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div id="entries"></div>
+  </div>
+
+<script>
+  let currentFilter = '';
+
+  function setFilter(level) {
+    currentFilter = level;
+    document.querySelectorAll('.card').forEach(c => c.classList.toggle('active', c.dataset.level === level));
+    load();
+  }
+
+  function escapeHtml(s) {
+    return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  }
+
+  async function load() {
+    const url = currentFilter ? `/logs/data?level=${encodeURIComponent(currentFilter)}` : '/logs/data';
+    const data = await fetch(url).then(r => r.json());
+
+    document.getElementById('count-all').textContent =
+      data.counts.ERROR + data.counts.WARNING + data.counts.INFO;
+    document.getElementById('count-error').textContent = data.counts.ERROR;
+    document.getElementById('count-warning').textContent = data.counts.WARNING;
+    document.getElementById('count-info').textContent = data.counts.INFO;
+
+    const container = document.getElementById('entries');
+    if (!data.entries.length) {
+      container.innerHTML = '<div class="empty">No log entries yet today.</div>';
+      return;
+    }
+
+    container.innerHTML = data.entries.map((e, i) => {
+      const hasTb = e.traceback && e.traceback.trim().length > 0;
+      return `
+        <div class="entry">
+          <div class="entry-head">
+            <span class="entry-time">${escapeHtml(e.timestamp)}</span>
+            <span class="entry-level ${e.level}">${e.level}</span>
+            <span class="entry-msg">${escapeHtml(e.message)}</span>
+          </div>
+          ${hasTb ? `
+            <span class="entry-tb-toggle" onclick="this.nextElementSibling.classList.toggle('open')">Show traceback ▾</span>
+            <div class="entry-tb">${escapeHtml(e.traceback)}</div>
+          ` : ''}
+        </div>
+      `;
+    }).join('');
+  }
+
+  // Same tab-visibility-aware polling as usage.html — no point re-querying
+  // and re-parsing the log file every 30s for a page nobody's looking at.
+  let pollInterval = null;
+
+  function startPolling() {
+    if (pollInterval) return;
+    pollInterval = setInterval(load, 30000);
+  }
+
+  function stopPolling() {
+    clearInterval(pollInterval);
+    pollInterval = null;
+  }
+
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) {
+      stopPolling();
+    } else {
+      load();
+      startPolling();
+    }
+  });
+
+  load();
+  startPolling();
+</script>
+</body>
+</html>
