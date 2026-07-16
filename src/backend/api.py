@@ -413,8 +413,13 @@ _COMPLEX_SIGNALS = {
 }
 
 
-def _pick_model(message: str) -> str:
-    """Route to Haiku for simple queries, Sonnet for doc/complex queries."""
+def _pick_model(message: str, has_attachment: bool = False) -> str:
+    """Route to Haiku for simple queries, Sonnet for doc/complex queries.
+    An attachment always routes to Sonnet — the text alone (often empty,
+    since a user can send an attachment with no typed message) has no
+    signal about the attached document/image's actual complexity."""
+    if has_attachment:
+        return "claude-sonnet-4-6"
     msg = message.lower()
     if len(message) > 120:
         return "claude-sonnet-4-6"
@@ -608,7 +613,7 @@ async def chat(req: ChatRequest):
     history = session_get(session_id)
     history.append({"role": "user", "content": _history_text_for(message, req.attachment)})
 
-    model = _pick_model(message)
+    model = _pick_model(message, has_attachment=req.attachment is not None)
     api_messages = _build_api_messages(history[-HISTORY_LIMIT:], req.attachment, message)
     runner = app.state.client.beta.messages.tool_runner(
         model=model,
@@ -712,7 +717,7 @@ async def stream_chat(req: ChatRequest):
                 break
         return window
 
-    model = _pick_model(message)
+    model = _pick_model(message, has_attachment=req.attachment is not None)
 
     async def generate():
         response_text = ""
