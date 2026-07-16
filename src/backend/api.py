@@ -38,6 +38,7 @@ from anthropic import AsyncAnthropic, APIError
 from anthropic.lib.tools.mcp import async_mcp_tool
 from mcp import ClientSession
 from mcp.client.stdio import StdioServerParameters, stdio_client
+from mcp.shared.exceptions import McpError
 from database import (
     init_db, session_get, session_save, session_list, session_delete,
     usage_log, usage_summary, credit_status, credit_set,
@@ -257,8 +258,22 @@ async def read_mcp_resource(uri: str):
         result = await _call_mcp(app.state.mcp_session.read_resource(AnyUrl(uri)))
     except HTTPException:
         raise
-    except Exception as err:
+    except (ValueError, McpError) as err:
+        # ValueError: pydantic's AnyUrl validation for a malformed uri
+        # (raised client-side, before any MCP round-trip). McpError: an
+        # error raised inside mcp_server.py's own handler (e.g. "Unknown
+        # resource URI: ...") — confirmed via live testing that it crosses
+        # the process boundary as McpError, not literally as the ValueError
+        # mcp_server.py raised, since the exception is reconstructed from a
+        # JSON-RPC error response, not passed by reference across processes.
+        # Both carry safe, curated, input-focused text meant to be shown.
         raise HTTPException(status_code=400, detail=str(err))
+    except Exception as err:
+        # Anything else is unexpected — log the real error server-side, but
+        # never forward its raw message, which could leak internal paths,
+        # library internals, or other implementation details to the client.
+        print(f"[resources/content] Unexpected error: {type(err).__name__}: {err}")
+        raise HTTPException(status_code=500, detail="An unexpected error occurred reading this resource.")
     content = "".join(c.text for c in result.contents if hasattr(c, "text"))
     return {"uri": uri, "content": content}
 
@@ -293,8 +308,14 @@ async def invoke_mcp_prompt(name: str, body: PromptInvocation):
         result = await _call_mcp(app.state.mcp_session.get_prompt(name, body.arguments))
     except HTTPException:
         raise
-    except Exception as err:
+    except (ValueError, McpError) as err:
+        # Same reasoning as /resources/content: mcp_server.py's own
+        # deliberately-worded message for an unknown prompt name (e.g.
+        # "Unknown prompt: 'foo'") crosses the process boundary as McpError.
         raise HTTPException(status_code=400, detail=str(err))
+    except Exception as err:
+        print(f"[prompts/{{name}}] Unexpected error: {type(err).__name__}: {err}")
+        raise HTTPException(status_code=500, detail="An unexpected error occurred invoking this prompt.")
     return {
         "description": result.description,
         "messages": [{"role": m.role, "text": m.content.text} for m in result.messages],

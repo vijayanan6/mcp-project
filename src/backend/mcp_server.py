@@ -258,6 +258,15 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
     # ── Tool: calculate ───────────────────────────────────────────────────
     if name == "calculate":
         expr = arguments.get("expression", "")
+        if not isinstance(expr, str):
+            return [types.TextContent(type="text", text="Error: 'expression' must be a string.")]
+        # A length cap catches the common case cheaply, but doesn't fully close
+        # computational-DoS risk on its own — a short expression like "9**9**9"
+        # still explodes to an astronomically large number. __builtins__: {}
+        # below is what actually stops code execution; this cap only stops the
+        # cheapest attack (a pathologically long expression string).
+        if len(expr) > 200:
+            return [types.TextContent(type="text", text="Error: expression too long (max 200 characters).")]
 
         # Use eval() with a restricted namespace for safe math.
         # Setting __builtins__ to {} blocks access to open(), exec(),
@@ -313,8 +322,22 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
     # ── Tool: manage_notes ────────────────────────────────────────────────
     if name == "manage_notes":
         action  = arguments.get("action", "")
-        title   = arguments.get("title", "").strip()
+        title   = arguments.get("title", "")
         content = arguments.get("content", "")
+        # .strip() below would crash with AttributeError on a non-string
+        # argument (e.g. Claude — or a malformed call — passing a number);
+        # never assume the declared inputSchema type was actually honored.
+        if not isinstance(title, str) or not isinstance(content, str):
+            return [types.TextContent(type="text", text="Error: 'title' and 'content' must be strings.")]
+        title = title.strip()
+        # content flows back into Claude's own context on a later "read"
+        # action — the same reason chat messages get a length cap
+        # (_MAX_MESSAGE_LEN in api.py) applies here: bound how much
+        # user-controlled text can round-trip into the model's context.
+        if len(title) > 200:
+            return [types.TextContent(type="text", text="Error: 'title' too long (max 200 characters).")]
+        if len(content) > 10000:
+            return [types.TextContent(type="text", text="Error: 'content' too long (max 10000 characters).")]
 
         if action == "save":
             if not title:
@@ -365,6 +388,16 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
         n = arguments.get("n_results", 4)
         if not query:
             return [types.TextContent(type="text", text="Error: 'query' is required.")]
+        # Confirmed via live testing, not assumed: passing n_results through to
+        # ChromaDB unvalidated crashes the tool call outright rather than
+        # returning a clean error — a non-int type (e.g. "5" or 3.5) raises
+        # TypeError/ValueError deep inside collection.query(), and <= 0 raises
+        # "cannot be negative, or zero." A malformed *type* is rejected (the
+        # caller should fix its call); an out-of-range *value* is clamped
+        # rather than rejected, since the intent (some n) is still clear.
+        if not isinstance(n, int) or isinstance(n, bool):
+            return [types.TextContent(type="text", text="Error: 'n_results' must be an integer.")]
+        n = max(1, min(n, 20))
 
         stats = get_stats()
         if stats["total_chunks"] == 0:

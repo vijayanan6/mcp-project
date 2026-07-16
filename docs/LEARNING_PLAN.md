@@ -32,6 +32,7 @@ Last updated: July 2026
 - [x] MCP Inspector — launched via `npx @modelcontextprotocol/inspector python src/backend/mcp_server.py`, connected past the proxy auth-token prompt, tested at least one tool directly against the running server, no Claude API call needed
 - [x] MCP resources & prompts — the two MCP primitives beyond tools; built, then found via `/code-review` to be unreachable through the running app (server-side only, never wired into `api.py`), fixed
 - [x] Error Handling & Resilience — 429 backoff (SDK-native, verified not hand-rolled), clean errors instead of raw 500s/tracebacks, MCP crash detection (manual recovery, automatic reconnect attempted and reverted after live testing), `search_docs` relevance-threshold fallback, circuit breaker pattern understood and deliberately not built (no failure point in this app has the expensive-repeated-call shape it protects against)
+- [x] Security Fundamentals for AI Apps — tool input validation (found 4/5 invalid `search_docs` inputs genuinely crashed the tool before fixing), path traversal defense explained, 2 real raw-error-leak routes found and fixed, OWASP LLM Top 10 mapped against this codebase with honest named gaps (no system-prompt-extraction defense, no RAG faithfulness evals yet)
 
 ### Not Yet Started ❌
 - [ ] pytest — testing framework for MCP tools and FastAPI routes
@@ -100,13 +101,13 @@ Last updated: July 2026
 
 ---
 
-### Security Fundamentals for AI Apps
+### Security Fundamentals for AI Apps ✅
 - [x] Understand prompt injection — user input that overrides your system prompt (see Prompt Engineering Fundamentals above)
 - [x] Sanitise user input before passing to Claude — strip control characters, cap length (`_sanitize_input()` in `api.py`, applied in both `/chat` and `/stream`)
-- [ ] Validate all tool inputs in `mcp_server.py` — never trust Claude's arguments blindly
-- [ ] Understand path traversal — already implemented in `read_doc`, understand why it matters
-- [ ] Never expose raw error messages to the browser — they leak implementation details
-- [ ] Understand OWASP Top 10 for AI applications
+- [x] Validate all tool inputs in `mcp_server.py` — never trust Claude's arguments blindly. Confirmed via live testing (not assumed) that 4 of 5 invalid `search_docs` `n_results` values genuinely crashed the tool with an unhandled exception rather than a clean error. Added type/bounds checks to `calculate` (length cap — doesn't fully close computational-DoS risk on its own, e.g. `9**9**9`, but stops the cheap attack), `manage_notes` (type checks + length caps on `title`/`content`, since content flows back into Claude's context on a later read), and `search_docs` (`n_results` type-checked and clamped to [1, 20]).
+- [x] Understand path traversal — already implemented in `read_doc`, understand why it matters. The defense resolves the path fully first (`.resolve()`, following every `..`), then checks whether the *result* is still physically inside `knowledge_base/` — not by pattern-matching for `".."` in the string, which is fragile and bypassable.
+- [x] Never expose raw error messages to the browser — they leak implementation details. Found and fixed 2 real leaks: `/resources/content` and `POST /prompts/{name}` forwarded any exception's raw `str(err)` straight to the client. Fixed to distinguish safe/curated messages (a `ValueError` from local `AnyUrl` validation, or an `McpError` — confirmed via live testing that errors raised inside `mcp_server.py`'s own handlers cross the process boundary as `McpError`, not literally as the `ValueError` that was raised, since the exception is reconstructed from a JSON-RPC response, not passed by reference) from genuinely unexpected exceptions, which now get a generic message instead of their raw text.
+- [x] Understand OWASP Top 10 for AI applications — mapped all 10 categories (2025 revision) against this codebase: strong coverage on Prompt Injection (LLM01), Excessive Agency (LLM06 — `text_editor_tool.py`'s one-file lock, `calculate`'s restricted `eval()`), and Unbounded Consumption (LLM10 — the entire cost dashboard plus today's input-validation fixes); honest named gaps on System Prompt Leakage (LLM07 — no extraction defense) and Misinformation (LLM09 — no RAG faithfulness evals yet, already tracked separately in this plan).
 
 **Success check:** Can explain 3 AI-specific attack vectors and point to where your app defends against each
 
