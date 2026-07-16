@@ -1144,15 +1144,26 @@ async def stream_chat(req: ChatRequest):
             await _mcp_crash_detected(e)
             _log_latency("/stream", _start_time, session_id=session_id, outcome="mcp_crash")
             _lf_finish(generation, level="ERROR", status_message="mcp_crash")
-            message = "Lost connection to the tool server. The server needs to be restarted to recover."
-            yield f"data: {json.dumps({'type': 'error', 'message': message})}\n\n"
+            # Named error_message, not message: `message` is the outer closure
+            # variable holding the user's text (read earlier in this same
+            # function, in _build_api_messages(...)). Python decides whether a
+            # name is local to a function by scanning the *entire* function
+            # body for any assignment to it, regardless of order or which
+            # branch runs — so reassigning `message` here, even inside an
+            # except block that might never execute, would make every earlier
+            # read of `message` in this function raise UnboundLocalError
+            # instead of resolving to the closure variable. Confirmed live:
+            # this crashed every single /stream call, unconditionally, before
+            # any Claude API call was even attempted.
+            error_message = "Lost connection to the tool server. The server needs to be restarted to recover."
+            yield f"data: {json.dumps({'type': 'error', 'message': error_message})}\n\n"
         except APIError as e:
             # Same reasoning as /chat: AsyncAnthropic already retried internally before
             # raising, and a raw SDK exception string shouldn't reach the client.
             _log_latency("/stream", _start_time, session_id=session_id, outcome=type(e).__name__)
             _lf_finish(generation, level="ERROR", status_message=type(e).__name__)
-            message = f"Claude API is temporarily unavailable ({type(e).__name__}). Please try again in a moment."
-            yield f"data: {json.dumps({'type': 'error', 'message': message})}\n\n"
+            error_message = f"Claude API is temporarily unavailable ({type(e).__name__}). Please try again in a moment."
+            yield f"data: {json.dumps({'type': 'error', 'message': error_message})}\n\n"
         except Exception as e:
             _log_latency("/stream", _start_time, session_id=session_id, outcome="unexpected_error")
             _lf_finish(generation, level="ERROR", status_message="unexpected_error")
