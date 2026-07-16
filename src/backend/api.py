@@ -33,7 +33,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse, StreamingResponse
 from pydantic import AnyUrl, BaseModel
 
-from anthropic import AsyncAnthropic
+from anthropic import AsyncAnthropic, APIError
 from anthropic.lib.tools.mcp import async_mcp_tool
 from mcp import ClientSession
 from mcp.client.stdio import StdioServerParameters, stdio_client
@@ -622,31 +622,41 @@ async def chat(req: ChatRequest):
     total_web_searches = 0
     has_usage = False
 
-    async for msg in runner:
-        if hasattr(msg, "usage") and msg.usage:
-            u = msg.usage
-            total_input += u.input_tokens
-            total_cache_write += getattr(u, "cache_creation_input_tokens", 0)
-            total_cache_read += getattr(u, "cache_read_input_tokens", 0)
-            total_output += u.output_tokens
-            server_tool_use = getattr(u, "server_tool_use", None)
-            if server_tool_use:
-                total_web_searches += getattr(server_tool_use, "web_search_requests", 0)
-            has_usage = True
-        for block in msg.content:
-            if block.type == "tool_use":
-                tools_used.append(block.name)
-            elif block.type == "server_tool_use":
-                # Server-side tools (web_search, code_execution, ...) arrive as
-                # server_tool_use blocks, not tool_use — tracked separately so
-                # "Cost by Tool" attributes their fee correctly.
-                tools_used.append(block.name)
-            elif block.type == "text" and block.text:
-                response_text += block.text
-                for c in (getattr(block, "citations", None) or []):
-                    page = getattr(c, "start_page_number", None)
-                    if page is not None:
-                        response_text += f" (p.{page})"
+    try:
+        async for msg in runner:
+            if hasattr(msg, "usage") and msg.usage:
+                u = msg.usage
+                total_input += u.input_tokens
+                total_cache_write += getattr(u, "cache_creation_input_tokens", 0)
+                total_cache_read += getattr(u, "cache_read_input_tokens", 0)
+                total_output += u.output_tokens
+                server_tool_use = getattr(u, "server_tool_use", None)
+                if server_tool_use:
+                    total_web_searches += getattr(server_tool_use, "web_search_requests", 0)
+                has_usage = True
+            for block in msg.content:
+                if block.type == "tool_use":
+                    tools_used.append(block.name)
+                elif block.type == "server_tool_use":
+                    # Server-side tools (web_search, code_execution, ...) arrive as
+                    # server_tool_use blocks, not tool_use — tracked separately so
+                    # "Cost by Tool" attributes their fee correctly.
+                    tools_used.append(block.name)
+                elif block.type == "text" and block.text:
+                    response_text += block.text
+                    for c in (getattr(block, "citations", None) or []):
+                        page = getattr(c, "start_page_number", None)
+                        if page is not None:
+                            response_text += f" (p.{page})"
+    except APIError as err:
+        # AsyncAnthropic already retries 429/5xx/timeouts/connection errors internally
+        # (exponential backoff + jitter, default max_retries=2) before raising — this
+        # only fires once those retries are exhausted. Never let the raw SDK exception
+        # (which can include request internals) reach the client as a raw 500.
+        raise HTTPException(
+            status_code=503,
+            detail=f"Claude API is temporarily unavailable ({type(err).__name__}). Please try again in a moment.",
+        ) from err
 
     history.append({"role": "assistant", "content": response_text})
     session_save(session_id, history)
@@ -796,6 +806,11 @@ async def stream_chat(req: ChatRequest):
                 }
             yield f"data: {json.dumps(done_data)}\n\n"
 
+        except APIError as e:
+            # Same reasoning as /chat: AsyncAnthropic already retried internally before
+            # raising, and a raw SDK exception string shouldn't reach the client.
+            message = f"Claude API is temporarily unavailable ({type(e).__name__}). Please try again in a moment."
+            yield f"data: {json.dumps({'type': 'error', 'message': message})}\n\n"
         except Exception as e:
             yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
         finally:
