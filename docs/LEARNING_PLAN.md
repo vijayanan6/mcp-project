@@ -90,7 +90,7 @@ Last updated: July 2026
 ### Error Handling & Resilience
 - [x] Handle Anthropic API rate limit errors (429) with exponential backoff retry — `AsyncAnthropic`'s default `max_retries=2` already does this internally (verified via SDK source, not assumed); no hand-rolled retry loop needed
 - [x] Handle API timeout errors gracefully — return a user-friendly message, not a 500 — `/chat` and `/stream` both catch `anthropic.APIError` and return/emit a clean message instead of a raw traceback
-- [ ] Handle MCP server crashes — detect and restart automatically
+- [x] Handle MCP server crashes — detect, and restart *manually* (automatic in-process restart attempted and deliberately reverted — see `_mcp_crash_detected()`'s docstring in `api.py`: anyio cancel scopes are bound to the task that opened them, so reconnecting from a request-handler task corrupts the connection; the correct fix is a dedicated connection-owner task, judged not worth building for a manually-run local tool with no uptime requirement). All 6 MCP-touching routes now return a clean 503 instead of a raw 500 on a detected crash.
 - [ ] Add fallback behaviour when `search_docs` returns no results
 - [x] Never let an unhandled exception reach the user — always return a clean error SSE event — `/stream` already caught broadly; `/chat` previously had no error handling at all, now fixed
 - [ ] Understand circuit breaker pattern — stop calling a failing service temporarily

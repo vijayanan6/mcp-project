@@ -21,13 +21,14 @@ import json
 import os
 import sys
 import uuid
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, AsyncExitStack
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from dotenv import load_dotenv
 load_dotenv()
 
+import anyio
 import httpx
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse, StreamingResponse
@@ -56,6 +57,99 @@ SPIKE_MIN_ABSOLUTE = 1.00                      # floor so a near-zero average ca
 SERVER_SCRIPT = str(Path(__file__).parent / "mcp_server.py")
 
 
+# ── MCP connection: startup and crash recovery share this ────────────────────
+
+# Anthropic server-side tool — runs on Anthropic's infrastructure, no MCP
+# round-trip. max_uses caps searches per conversation turn so a single request
+# can't rack up unbounded $10/1k-search charges. allowed_callers=["direct"] is
+# required because _pick_model() can route to Haiku, which doesn't support
+# programmatic tool calling — the web_search_20260209 default
+# (["code_execution_20260120"]) 400s on Haiku.
+_WEB_SEARCH_TOOL = {
+    "type": "web_search_20260209",
+    "name": "web_search",
+    "max_uses": 3,
+    "allowed_callers": ["direct"],
+}
+
+# Client-side tool — executed by ProjectNotesEditorTool, not Anthropic.
+# Hardcoded to only ever touch knowledge_base/project_notes.md (see text_editor_tool.py).
+_NOTES_EDITOR_TOOL = ProjectNotesEditorTool()
+
+
+async def _connect_mcp(app: FastAPI) -> None:
+    """Connect to mcp_server.py and populate app.state.tools/tool_names/
+    mcp_session. Called once, from lifespan() at startup.
+
+    Uses AsyncExitStack rather than a bare `async with` only so shutdown can
+    close it from a separate line after `yield`, not because this connection
+    is ever re-opened later — see _mcp_crash_detected()'s docstring for why
+    an automatic reconnect isn't implemented.
+    """
+    server_params = StdioServerParameters(command=sys.executable, args=[SERVER_SCRIPT])
+    stack = AsyncExitStack()
+    read, write = await stack.enter_async_context(stdio_client(server_params))
+    mcp_session = await stack.enter_async_context(ClientSession(read, write))
+    await mcp_session.initialize()
+
+    tools_response = await mcp_session.list_tools()
+    tools = [async_mcp_tool(t, mcp_session) for t in tools_response.tools]
+    tool_names = [t.name for t in tools_response.tools]
+
+    app.state.tools = tools + [_WEB_SEARCH_TOOL, _NOTES_EDITOR_TOOL]
+    app.state.tool_names = tool_names + ["web_search", "str_replace_based_edit_tool"]
+    # Kept alive for the app's lifetime so /resources and /prompts routes can
+    # call list_resources()/read_resource()/list_prompts()/get_prompt() live
+    # instead of a stale startup snapshot — resources in particular change as
+    # notes are added.
+    app.state.mcp_session = mcp_session
+    app.state._mcp_stack = stack
+
+
+async def _mcp_crash_detected(err: Exception) -> None:
+    """Logs a detected MCP subprocess crash. Does not attempt to reconnect.
+
+    An automatic in-process reconnect was attempted and reverted after live
+    testing: anyio's cancel scopes (used internally by mcp's stdio_client via
+    anyio.create_task_group()) are bound to the asyncio Task that opened
+    them, but a reconnect triggered from a request handler necessarily runs
+    in a different Task than whichever one opened the connection being
+    replaced (lifespan()'s startup task, or an earlier reconnect). Closing —
+    or even just letting Python's garbage collector finalize — the old
+    connection from a different Task raises "cancel scope in a different
+    task than it was entered in" and corrupts anyio's task-group state badly
+    enough to cancel unrelated in-flight work, including the brand-new
+    connection just established. A correct fix exists (a single dedicated
+    long-lived task owning the MCP connection for the app's whole lifetime,
+    with request handlers signaling it to reconnect rather than reconnecting
+    inline) but isn't justified for this app: mcp_server.py's tool handlers
+    already catch their own exceptions, so the subprocess dying at all is
+    rare; `uvicorn --reload` already restarts on any file save; and this is
+    a manually-run local tool with no uptime requirement. A manual restart
+    is the current recovery path — this function's job is only to make sure
+    that's a clean, understood failure, not a raw traceback.
+    """
+    print(f"[mcp] Connection lost ({type(err).__name__}: {err}). "
+          f"A manual server restart is currently required to recover — see "
+          f"_mcp_crash_detected()'s docstring for why automatic reconnect isn't implemented.")
+
+
+async def _call_mcp(coro):
+    """Await an MCP session call, converting a detected subprocess crash into
+    a clean 503 instead of letting anyio's raw exception reach the route as
+    an unhandled 500. Shared by /resources, /resources/content, /prompts, and
+    POST /prompts/{name} — the same crash can surface from any of them, not
+    just /chat and /stream."""
+    try:
+        return await coro
+    except (anyio.ClosedResourceError, anyio.BrokenResourceError) as err:
+        await _mcp_crash_detected(err)
+        raise HTTPException(
+            status_code=503,
+            detail="Lost connection to the tool server. The server needs to be restarted to recover.",
+        ) from err
+
+
 # ── Lifespan: runs on startup and shutdown ───────────────────────────────────
 
 @asynccontextmanager
@@ -68,68 +162,34 @@ async def lifespan(app: FastAPI):
     We start the MCP server here so it stays alive for ALL requests —
     not started fresh on every API call.
     """
-    server_params = StdioServerParameters(command=sys.executable, args=[SERVER_SCRIPT])
+    await _connect_mcp(app)
 
-    async with stdio_client(server_params) as (read, write):
-        async with ClientSession(read, write) as mcp_session:
-            await mcp_session.initialize()
+    # Windows: SSLKEYLOGFILE may point to a monitoring driver that Python
+    # can't write to. Pop it before creating any SSL context.
+    import os as _os
+    import httpx as _httpx
+    _os.environ.pop("SSLKEYLOGFILE", None)
+    # Pass a custom httpx client with verify=False to avoid the Windows
+    # corporate certificate chain issue when calling the Anthropic API.
+    app.state.client = AsyncAnthropic(
+        http_client=_httpx.AsyncClient(verify=False)
+    )
+    from rag import index_all, get_stats
 
-            tools_response = await mcp_session.list_tools()
-            tools = [async_mcp_tool(t, mcp_session) for t in tools_response.tools]
-            tool_names = [t.name for t in tools_response.tools]
+    init_db()  # ensure tables exist
 
-            # Anthropic server-side tool — runs on Anthropic's infrastructure, no
-            # MCP round-trip. max_uses caps searches per conversation turn so a
-            # single request can't rack up unbounded $10/1k-search charges.
-            # allowed_callers=["direct"] is required because _pick_model() can route
-            # to Haiku, which doesn't support programmatic tool calling — the
-            # web_search_20260209 default (["code_execution_20260120"]) 400s on Haiku.
-            web_search_tool = {
-                "type": "web_search_20260209",
-                "name": "web_search",
-                "max_uses": 3,
-                "allowed_callers": ["direct"],
-            }
+    # Auto-index docs on startup so RAG works immediately
+    indexed = index_all()
+    stats = get_stats()
+    if indexed:
+        print(f"Indexed {len(indexed)} doc(s) -> {stats['total_chunks']} chunks in ChromaDB")
 
-            # Client-side tool — executed by ProjectNotesEditorTool, not Anthropic.
-            # Hardcoded to only ever touch knowledge_base/project_notes.md (see text_editor_tool.py).
-            notes_editor_tool = ProjectNotesEditorTool()
-
-            tools = tools + [web_search_tool, notes_editor_tool]
-            tool_names = tool_names + ["web_search", "str_replace_based_edit_tool"]
-
-            # Store on app.state so all route handlers can access them
-            app.state.tools = tools
-            app.state.tool_names = tool_names
-            # Kept alive for the app's lifetime (same session used by the tools
-            # above) so /resources and /prompts routes can call list_resources()/
-            # read_resource()/list_prompts()/get_prompt() live instead of a stale
-            # startup snapshot — resources in particular change as notes are added.
-            app.state.mcp_session = mcp_session
-
-            # Windows: SSLKEYLOGFILE may point to a monitoring driver that Python
-            # can't write to. Pop it before creating any SSL context.
-            import os as _os
-            import httpx as _httpx
-            _os.environ.pop("SSLKEYLOGFILE", None)
-            # Pass a custom httpx client with verify=False to avoid the Windows
-            # corporate certificate chain issue when calling the Anthropic API.
-            app.state.client = AsyncAnthropic(
-                http_client=_httpx.AsyncClient(verify=False)
-            )
-            from rag import index_all, get_stats
-
-            init_db()  # ensure tables exist
-
-            # Auto-index docs on startup so RAG works immediately
-            indexed = index_all()
-            stats = get_stats()
-            if indexed:
-                print(f"Indexed {len(indexed)} doc(s) -> {stats['total_chunks']} chunks in ChromaDB")
-
-            print(f"MCP server ready. Tools: {tool_names}")
-            yield
-            # MCP server subprocess is cleaned up automatically here
+    print(f"MCP server ready. Tools: {app.state.tool_names}")
+    yield
+    # Tear down whichever MCP connection is current (startup's original one,
+    # or a later crash-recovery reconnect) — AsyncExitStack.aclose() is the
+    # counterpart to the enter_async_context() calls in _connect_mcp().
+    await app.state._mcp_stack.aclose()
 
 
 # ── App setup ────────────────────────────────────────────────────────────────
@@ -181,7 +241,7 @@ async def attachment_limits():
 @app.get("/resources")
 async def list_mcp_resources():
     """Return available MCP resources (knowledge base listing + one per saved note)."""
-    result = await app.state.mcp_session.list_resources()
+    result = await _call_mcp(app.state.mcp_session.list_resources())
     return {
         "resources": [
             {"uri": str(r.uri), "name": r.name, "description": r.description}
@@ -194,7 +254,9 @@ async def list_mcp_resources():
 async def read_mcp_resource(uri: str):
     """Read a single MCP resource's content by URI, as returned by GET /resources."""
     try:
-        result = await app.state.mcp_session.read_resource(AnyUrl(uri))
+        result = await _call_mcp(app.state.mcp_session.read_resource(AnyUrl(uri)))
+    except HTTPException:
+        raise
     except Exception as err:
         raise HTTPException(status_code=400, detail=str(err))
     content = "".join(c.text for c in result.contents if hasattr(c, "text"))
@@ -204,7 +266,7 @@ async def read_mcp_resource(uri: str):
 @app.get("/prompts")
 async def list_mcp_prompts():
     """Return available MCP prompts."""
-    result = await app.state.mcp_session.list_prompts()
+    result = await _call_mcp(app.state.mcp_session.list_prompts())
     return {
         "prompts": [
             {
@@ -228,7 +290,9 @@ class PromptInvocation(BaseModel):
 async def invoke_mcp_prompt(name: str, body: PromptInvocation):
     """Invoke an MCP prompt by name, returning the messages it generates."""
     try:
-        result = await app.state.mcp_session.get_prompt(name, body.arguments)
+        result = await _call_mcp(app.state.mcp_session.get_prompt(name, body.arguments))
+    except HTTPException:
+        raise
     except Exception as err:
         raise HTTPException(status_code=400, detail=str(err))
     return {
@@ -728,6 +792,15 @@ async def chat(req: ChatRequest):
                     tools_used.append(block.name)
                 elif block.type == "text" and block.text:
                     response_text += _text_with_citations(block)
+    except (anyio.ClosedResourceError, anyio.BrokenResourceError) as err:
+        # The mcp_server.py subprocess died mid-request (crash, OOM, killed).
+        # No automatic reconnect — see _mcp_crash_detected()'s docstring for
+        # why. Every request will fail this way until the server is restarted.
+        await _mcp_crash_detected(err)
+        raise HTTPException(
+            status_code=503,
+            detail="Lost connection to the tool server. The server needs to be restarted to recover.",
+        ) from err
     except APIError as err:
         # AsyncAnthropic already retries 429/5xx/timeouts/connection errors internally
         # (exponential backoff + jitter, default max_retries=2) before raising — this
@@ -868,6 +941,12 @@ async def stream_chat(req: ChatRequest):
                 }
             yield f"data: {json.dumps(done_data)}\n\n"
 
+        except (anyio.ClosedResourceError, anyio.BrokenResourceError) as e:
+            # Same reasoning as /chat: no automatic reconnect — see
+            # _mcp_crash_detected()'s docstring for why.
+            await _mcp_crash_detected(e)
+            message = "Lost connection to the tool server. The server needs to be restarted to recover."
+            yield f"data: {json.dumps({'type': 'error', 'message': message})}\n\n"
         except APIError as e:
             # Same reasoning as /chat: AsyncAnthropic already retried internally before
             # raising, and a raw SDK exception string shouldn't reach the client.
