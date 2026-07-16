@@ -174,10 +174,10 @@ Last updated: July 2026
 - [x] Build visual cost dashboard — daily chart, model split, per-session, per-tool
 - [x] Credit tracker — starting balance, burn rate, days remaining, alert badge
 - [x] Multi-channel/multi-tier alerting — Discord webhook push (mobile-reachable, unlike the passive in-browser badge): 2-tier low-balance, spend-spike anomaly detection (today vs. trailing 7-day average), per-tool budget cap, daily digest. Each independently cooldown-gated; found and fixed a real state-transition bug (stale cooldown when jumping tiers) by testing transitions, not just states.
-- [ ] Add structured logging to `api.py` using Python's `logging` module (not `print`)
-- [ ] Log every error with full traceback to a log file
-- [ ] Understand DEBUG / INFO / WARNING / ERROR / CRITICAL log levels
-- [ ] Add request latency tracking — how long does each `/stream` call take?
+- [x] Add structured logging to `api.py` using Python's `logging` module (not `print`) — a named `logger`, two handlers (console level scales with `ENVIRONMENT`; file always captures INFO+), replacing every ad-hoc `print()`/`_log()` call site
+- [x] Log every error with full traceback to a log file — `logger.error(..., exc_info=True)`; verified live by killing the MCP subprocess again and confirming a real full traceback landed in `data/app.log`, not just a message
+- [x] Understand DEBUG / INFO / WARNING / ERROR / CRITICAL log levels — applied deliberately per call site, not uniformly: routine startup events are INFO, non-fatal caught failures (a Discord webhook failing, one alert check failing) are WARNING, genuinely unexpected/crash-class failures are ERROR with a traceback
+- [x] Add request latency tracking — how long does each `/stream` call take? — a shared `_log_latency()` helper logs elapsed ms at *every* exit point of both `/chat` and `/stream` (success and every failure path alike, since latency on a failing request matters too), and surfaces it in the response body / `done` SSE event
 - [ ] Explore Langfuse free tier — trace every Claude API call end to end
 
 **Success check:** Every request and error is logged with structured fields. Langfuse shows token usage and latency per conversation turn

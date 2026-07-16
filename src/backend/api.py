@@ -18,8 +18,10 @@ file's plain `from database import ...`-style internal imports keep resolving):
 import asyncio
 import base64
 import json
+import logging
 import os
 import sys
+import time
 import uuid
 from contextlib import asynccontextmanager, AsyncExitStack
 from datetime import date, datetime, timedelta
@@ -72,12 +74,47 @@ SPIKE_MIN_ABSOLUTE = 1.00                      # floor so a near-zero average ca
 SERVER_SCRIPT = str(Path(__file__).parent / "mcp_server.py")
 
 
-def _log(message: str) -> None:
-    """print(), prefixed with the current environment. Every log line in this
-    file should go through this rather than a bare print() — a log line with
-    no environment tag is useless once more than one environment exists
-    (which server printed this? which one alerted?)."""
-    print(f"[{ENVIRONMENT}] {message}")
+# ── Logging ──────────────────────────────────────────────────────────────────
+# Structured logging via Python's logging module, replacing bare print(). Two
+# handlers: console (level scales with ENVIRONMENT — verbose in development,
+# quieter in anything else) and a file that always captures INFO+ regardless
+# of environment, so a full operational record — including every error with
+# its real traceback — exists on disk, not just in whatever terminal happened
+# to be open when something went wrong.
+_LOG_DIR = Path(__file__).parent.parent.parent / "data"
+_LOG_DIR.mkdir(parents=True, exist_ok=True)
+_LOG_FILE = _LOG_DIR / "app.log"
+
+logger = logging.getLogger("mcp_project")
+logger.setLevel(logging.DEBUG)  # handlers below do the real filtering
+logger.propagate = False  # don't feed into uvicorn's own root logger config
+
+_log_formatter = logging.Formatter(
+    fmt=f"%(asctime)s [{ENVIRONMENT}] %(levelname)-8s %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+
+_console_handler = logging.StreamHandler()
+_console_handler.setLevel(logging.DEBUG if ENVIRONMENT == "development" else logging.INFO)
+_console_handler.setFormatter(_log_formatter)
+logger.addHandler(_console_handler)
+
+_file_handler = logging.FileHandler(_LOG_FILE, encoding="utf-8")
+_file_handler.setLevel(logging.INFO)
+_file_handler.setFormatter(_log_formatter)
+logger.addHandler(_file_handler)
+
+
+def _log_latency(route: str, start_time: float, **fields) -> float:
+    """Log how long a request took, in ms, plus any extra context (session_id,
+    model, outcome). Called at every exit point of /chat and /stream — success
+    and failure alike — since latency on a *failing* request is exactly as
+    useful to know as latency on a succeeding one. Returns the elapsed ms so
+    callers can also surface it in a response body if useful."""
+    elapsed_ms = (time.perf_counter() - start_time) * 1000
+    extra = " ".join(f"{k}={v}" for k, v in fields.items())
+    logger.info(f"[latency] {route} {extra} {elapsed_ms:.0f}ms")
+    return elapsed_ms
 
 
 # ── MCP connection: startup and crash recovery share this ────────────────────
@@ -152,9 +189,12 @@ async def _mcp_crash_detected(err: Exception) -> None:
     is the current recovery path — this function's job is only to make sure
     that's a clean, understood failure, not a raw traceback.
     """
-    _log(f"[mcp] Connection lost ({type(err).__name__}: {err}). "
-         f"A manual server restart is currently required to recover — see "
-         f"_mcp_crash_detected()'s docstring for why automatic reconnect isn't implemented.")
+    logger.error(
+        f"[mcp] Connection lost ({type(err).__name__}: {err}). "
+        f"A manual server restart is currently required to recover — see "
+        f"_mcp_crash_detected()'s docstring for why automatic reconnect isn't implemented.",
+        exc_info=True,
+    )
 
 
 async def _call_mcp(coro):
@@ -205,9 +245,9 @@ async def lifespan(app: FastAPI):
     indexed = index_all()
     stats = get_stats()
     if indexed:
-        _log(f"Indexed {len(indexed)} doc(s) -> {stats['total_chunks']} chunks in ChromaDB")
+        logger.info(f"Indexed {len(indexed)} doc(s) -> {stats['total_chunks']} chunks in ChromaDB")
 
-    _log(f"MCP server ready. Tools: {app.state.tool_names}")
+    logger.info(f"MCP server ready. Tools: {app.state.tool_names}")
     yield
     # Tear down whichever MCP connection is current (startup's original one,
     # or a later crash-recovery reconnect) — AsyncExitStack.aclose() is the
@@ -294,7 +334,7 @@ async def read_mcp_resource(uri: str):
         # Anything else is unexpected — log the real error server-side, but
         # never forward its raw message, which could leak internal paths,
         # library internals, or other implementation details to the client.
-        _log(f"[resources/content] Unexpected error: {type(err).__name__}: {err}")
+        logger.error(f"[resources/content] Unexpected error: {type(err).__name__}: {err}", exc_info=True)
         raise HTTPException(status_code=500, detail="An unexpected error occurred reading this resource.")
     content = "".join(c.text for c in result.contents if hasattr(c, "text"))
     return {"uri": uri, "content": content}
@@ -336,7 +376,7 @@ async def invoke_mcp_prompt(name: str, body: PromptInvocation):
         # "Unknown prompt: 'foo'") crosses the process boundary as McpError.
         raise HTTPException(status_code=400, detail=str(err))
     except Exception as err:
-        _log(f"[prompts/{{name}}] Unexpected error: {type(err).__name__}: {err}")
+        logger.error(f"[prompts/{{name}}] Unexpected error: {type(err).__name__}: {err}", exc_info=True)
         raise HTTPException(status_code=500, detail="An unexpected error occurred invoking this prompt.")
     return {
         "description": result.description,
@@ -596,7 +636,7 @@ async def _send_discord(message: str) -> bool:
             resp.raise_for_status()
         return True
     except Exception as e:
-        _log(f"[alert] Discord webhook failed: {e}")
+        logger.warning(f"[alert] Discord webhook failed: {e}")
         return False
 
 
@@ -778,7 +818,7 @@ async def _run_alert_checks() -> None:
         try:
             await check()
         except Exception as e:
-            _log(f"[alert] {check.__name__} failed: {e}")
+            logger.warning(f"[alert] {check.__name__} failed: {e}")
 
 
 @app.post("/chat")
@@ -788,6 +828,7 @@ async def chat(req: ChatRequest):
     Waits for Claude to finish before returning the full response.
     Good for testing; use /stream for the real UI.
     """
+    _start_time = time.perf_counter()
     session_id = req.session_id or str(uuid.uuid4())
     message = _sanitize_input(req.message)
     _validate_attachment(req.attachment)
@@ -840,6 +881,7 @@ async def chat(req: ChatRequest):
         # No automatic reconnect — see _mcp_crash_detected()'s docstring for
         # why. Every request will fail this way until the server is restarted.
         await _mcp_crash_detected(err)
+        _log_latency("/chat", _start_time, session_id=session_id, outcome="mcp_crash")
         raise HTTPException(
             status_code=503,
             detail="Lost connection to the tool server. The server needs to be restarted to recover.",
@@ -849,6 +891,7 @@ async def chat(req: ChatRequest):
         # (exponential backoff + jitter, default max_retries=2) before raising — this
         # only fires once those retries are exhausted. Never let the raw SDK exception
         # (which can include request internals) reach the client as a raw 500.
+        _log_latency("/chat", _start_time, session_id=session_id, outcome=type(err).__name__)
         raise HTTPException(
             status_code=503,
             detail=f"Claude API is temporarily unavailable ({type(err).__name__}). Please try again in a moment.",
@@ -862,10 +905,13 @@ async def chat(req: ChatRequest):
         usage_log(session_id, model, total_input, total_cache_write, total_cache_read, total_output, tools=tools_used, project="mcp-project", web_search_requests=total_web_searches)
         await _run_alert_checks()
 
+    latency_ms = _log_latency("/chat", _start_time, session_id=session_id, model=model, outcome="ok")
+
     return {
         "session_id": session_id,
         "response": response_text,
         "tools_used": tools_used,
+        "latency_ms": round(latency_ms, 1),
         "model": model,
     }
 
@@ -883,6 +929,7 @@ async def stream_chat(req: ChatRequest):
       { type: "done",  session_id: "..." }      — response complete
       { type: "error", message: "..." }         — something went wrong
     """
+    _start_time = time.perf_counter()
     session_id = req.session_id or str(uuid.uuid4())
     message = _sanitize_input(req.message)
     _validate_attachment(req.attachment)   # before StreamingResponse is built, so a 400 is a normal JSON response
@@ -974,7 +1021,8 @@ async def stream_chat(req: ChatRequest):
                 usage_log(session_id, model, total_input, total_cache_write, total_cache_read, total_output, tools=tools_called, project="mcp-project", web_search_requests=total_web_searches)
                 await _run_alert_checks()
 
-            done_data = {"type": "done", "session_id": session_id, "model": model}
+            latency_ms = _log_latency("/stream", _start_time, session_id=session_id, model=model, outcome="ok")
+            done_data = {"type": "done", "session_id": session_id, "model": model, "latency_ms": round(latency_ms, 1)}
             if has_usage:
                 done_data["usage"] = {
                     "input": total_input,
@@ -988,14 +1036,17 @@ async def stream_chat(req: ChatRequest):
             # Same reasoning as /chat: no automatic reconnect — see
             # _mcp_crash_detected()'s docstring for why.
             await _mcp_crash_detected(e)
+            _log_latency("/stream", _start_time, session_id=session_id, outcome="mcp_crash")
             message = "Lost connection to the tool server. The server needs to be restarted to recover."
             yield f"data: {json.dumps({'type': 'error', 'message': message})}\n\n"
         except APIError as e:
             # Same reasoning as /chat: AsyncAnthropic already retried internally before
             # raising, and a raw SDK exception string shouldn't reach the client.
+            _log_latency("/stream", _start_time, session_id=session_id, outcome=type(e).__name__)
             message = f"Claude API is temporarily unavailable ({type(e).__name__}). Please try again in a moment."
             yield f"data: {json.dumps({'type': 'error', 'message': message})}\n\n"
         except Exception as e:
+            _log_latency("/stream", _start_time, session_id=session_id, outcome="unexpected_error")
             yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
         finally:
             if consumer_task and not consumer_task.done():
