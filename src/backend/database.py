@@ -268,6 +268,14 @@ def usage_summary(project: str | None = None) -> dict:
         # correct (3 real invocations did happen). Fixed by first grouping to
         # (turn, tool) so a turn's cost is attributed once per distinct tool it
         # used, then aggregating those per-turn attributions across turns.
+        # code_execution has no pricing model of its own in _estimate_cost() (unlike
+        # web_search's flat $0.01/use fee) -- its historical appearance was always
+        # Anthropic's sandbox wrapping a web_search call (allowed_callers now forces
+        # web_search to be called directly, so this can't recur going forward; see
+        # CLAUDE.md's Cost by Tool note). Relabeled to web_search here, in the
+        # aggregation query only -- the raw tools_used JSON in usage_logs is left
+        # untouched, so the actual historical record (what the API really reported)
+        # stays intact if anyone ever needs to audit it again.
         by_tool = conn.execute(f"""
             SELECT
                 tool_name,
@@ -277,12 +285,13 @@ def usage_summary(project: str | None = None) -> dict:
             FROM (
                 SELECT
                     ul.id                       AS log_id,
-                    json_each.value             AS tool_name,
+                    CASE WHEN json_each.value = 'code_execution' THEN 'web_search'
+                         ELSE json_each.value END AS tool_name,
                     COUNT(*)                    AS calls,
                     MAX(ul.estimated_cost_usd)  AS cost_usd
                 FROM usage_logs ul, json_each(ul.tools_used)
                 {where.replace('WHERE', 'WHERE ul.project = ? AND') if project else ''}
-                GROUP BY ul.id, json_each.value
+                GROUP BY ul.id, tool_name
             )
             GROUP BY tool_name
             ORDER BY calls DESC
