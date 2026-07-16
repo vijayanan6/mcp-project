@@ -416,6 +416,21 @@ def _history_text_for(message: str, attachment: Attachment | None) -> str:
     marker = f"[User attached a file: {safe_name or attachment.media_type}]"
     return f"{message}\n\n{marker}" if message else marker
 
+
+def _safe_window(hist: list, limit: int) -> list:
+    """Slice history to limit while never splitting a tool_use/tool_result pair."""
+    window = hist[-limit:]
+    # Drop leading tool_result turns that have no matching tool_use in window
+    while window and window[0].get("role") == "user":
+        content = window[0].get("content", "")
+        # A user turn whose content is a list starting with tool_result is orphaned
+        if isinstance(content, list) and content and isinstance(content[0], dict) \
+                and content[0].get("type") == "tool_result":
+            window = window[1:]
+        else:
+            break
+    return window
+
 # Keywords that indicate doc/note/complex queries → use Sonnet
 _COMPLEX_SIGNALS = {
     "doc", "file", "note", "search", "find", "summarize", "summary",
@@ -625,7 +640,7 @@ async def chat(req: ChatRequest):
     history.append({"role": "user", "content": _history_text_for(message, req.attachment)})
 
     model = _pick_model(message, has_attachment=req.attachment is not None)
-    api_messages = _build_api_messages(history[-HISTORY_LIMIT:], req.attachment, message)
+    api_messages = _build_api_messages(_safe_window(history, HISTORY_LIMIT), req.attachment, message)
     runner = app.state.client.beta.messages.tool_runner(
         model=model,
         max_tokens=1024,
@@ -713,20 +728,6 @@ async def stream_chat(req: ChatRequest):
     _validate_attachment(req.attachment)   # before StreamingResponse is built, so a 400 is a normal JSON response
     history = session_get(session_id)
     history.append({"role": "user", "content": _history_text_for(message, req.attachment)})
-
-    def _safe_window(hist: list, limit: int) -> list:
-        """Slice history to limit while never splitting a tool_use/tool_result pair."""
-        window = hist[-limit:]
-        # Drop leading tool_result turns that have no matching tool_use in window
-        while window and window[0].get("role") == "user":
-            content = window[0].get("content", "")
-            # A user turn whose content is a list starting with tool_result is orphaned
-            if isinstance(content, list) and content and isinstance(content[0], dict) \
-                    and content[0].get("type") == "tool_result":
-                window = window[1:]
-            else:
-                break
-        return window
 
     model = _pick_model(message, has_attachment=req.attachment is not None)
 
