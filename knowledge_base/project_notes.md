@@ -139,6 +139,39 @@ Messages API content-block feature, not one of the 10 tools above.
     `git diff` rather than its self-report, and had the reviewer re-read the live file itself
     rather than trust the diff it was handed
 
+### Async & Concurrency
+36. `anyio` cancel scopes (and the TaskGroups built on them) are bound to the asyncio Task that
+    opened them — trying to close/exit one from a *different* Task raises "cancel scope in a
+    different task than it was entered in" and can cancel unrelated in-flight work, not just the
+    resource you meant to close. Found by actually killing a live subprocess mid-session, not
+    simulating it, across three different mitigation attempts before landing on the honest fix
+37. Not every checklist item should be fully implemented — a correct architectural fix (a
+    dedicated task owning a resource for the app's whole lifetime) can still be the wrong call for
+    an app whose actual failure rate and uptime requirements don't justify the complexity
+
+### Security & Validation
+38. A tool's declared JSON Schema is a description for Claude, not an enforcement mechanism —
+    a schema saying `n_results: integer` doesn't stop a malformed or unexpected value from
+    reaching the code; 4 of 5 tested invalid values genuinely crashed a tool before validation
+    was added
+39. Exceptions can't cross a process boundary by reference, only by reconstruction from a
+    protocol response — a `ValueError` raised inside `mcp_server.py` arrives client-side as
+    `mcp.shared.exceptions.McpError`, a completely different type, because the two processes
+    only share a JSON-RPC pipe, not memory
+40. Structural separation beats a policy you have to remember — "never mix dev and prod data"
+    went from a rule to hold onto, to something physically impossible once dev and any other
+    environment resolve to genuinely different files by construction
+
+### Measurement & Aggregation
+41. Measure before optimizing — the instinct was "add database indexes," but timing the actual
+    queries first (2.89ms total) showed they weren't the bottleneck; the real, measurable waste
+    was a dashboard polling every 30s with no check for tab visibility
+42. Summing a shared cost across a flattened one-to-many relationship (a JSON array exploded via
+    `json_each`, one row fanned into many) multiplies that cost by however many child rows came
+    from the same parent, if you don't deduplicate before summing — a real bug, caught only
+    because a human looked closely at one specific dashboard number and asked "why is this exactly
+    3x a plausible amount"
+
 ---
 
 ## Tech Stack
@@ -204,8 +237,10 @@ python -m uvicorn api:app --reload --port 8000 --app-dir src/backend
 ---
 
 ## Next Steps to Explore
-- Remaining Error Handling & Resilience items: MCP server crash detection/restart,
-  `search_docs` fallback behavior, circuit breaker concept
+- Remaining Observability & Logging items: structured Python `logging` (replacing ad-hoc
+  `print()`/`_log()`), full tracebacks logged to a file, request latency tracking, Langfuse
+  free-tier tracing
+- Testing with pytest — currently 0/8, fully unstarted
 - Replace mock weather with real OpenWeatherMap API
 - Add user authentication (JWT tokens)
 - Switch from SQLite to PostgreSQL

@@ -17,6 +17,7 @@ A full-stack AI application built entirely from first principles — no LangChai
 - **Production-grade cost and security discipline**: token-level cost tracking with credit/burn-rate forecasting and Discord mobile alerts; secret-scanning pre-commit hooks; SSH-signed, GitHub-verified commits; dependency vulnerability audits with root-cause tracing (not blanket patching).
 - **Continuously extended, not a frozen demo** — most recently: ephemeral multimodal chat attachments with PDF citations, the full MCP protocol surface (tools *and* resources *and* prompts, not just tools), and a full code-review backlog (10 real findings, tracked as GitHub issues) closed end-to-end with a verified fix and a live regression check for every single one.
 - **Directs multi-agent workflows, not just single-turn prompts** — designs and runs agent pipelines with deliberate structural constraints (e.g. a code-review "reviewer" agent given read-only tools so it's architecturally incapable of silently fixing instead of critiquing), not just sequential chat turns. See section 17.
+- **Resilience engineering with the reasoning made explicit, not just the code** — found a real async bug (task-bound cancel scopes corrupting a reconnect) by killing a live process, not by reading code; then made the deliberate, documented call *not* to build the architecturally "correct" fix once it was clear the app's actual failure rate didn't justify it. Same discipline caught a live cost-dashboard bug (a shared cost double-counted across a flattened one-to-many relationship) that looked completely trustworthy until one specific number got questioned. See section 18.
 
 ---
 
@@ -254,6 +255,8 @@ System prompt cached after message 1 → near-free on every subsequent turn
 
 **Key engineering decision:** cost is estimated from token counts × pricing table — no extra API call. Schema migration handled safely with `ALTER TABLE ... ADD COLUMN` + try/except. A stale pricing entry (old Haiku 3.5 rates left in place after migrating to Haiku 4.5) was later found by comparing the dashboard's live balance against the real console.anthropic.com figure — fixed, all affected historical rows backfilled, and the silent fallback that let it hide replaced with a warning for any future unpriced model.
 
+**A second, different real cost-tracking bug — caught by a specific question about one specific number, not a systematic audit.** Asked what a "code execution" line item on the Cost by Tool table actually represented; live data showed 3 calls costing $0.1510. Traced it to a genuine root cause: the aggregation query exploded each request's `tools_used` JSON array via `json_each()` and summed that request's *total* cost once per array element — so a single $0.0503 request that had called the same tool 3 times had its cost counted 3 times, while the adjacent "calls" figure was already correct (which is exactly what made the wrong number look trustworthy sitting next to it). Fixed by grouping to (request, tool) before aggregating across requests — confirmed the fix was genuinely general, not a narrow patch, when it silently corrected an unrelated tool with the identical pattern in the same pass. Also made a deliberate, explained call *not* to fix: this specific tool has no cost model of its own in the pricing logic, so its historical entries were relabeled to the tool whose cost they actually represented — done in the display query only, leaving the raw historical data in the database untouched and auditable.
+
 ---
 
 ### 7. Mobile Alerting — Designing for Real Runtime Constraints, Not the Textbook Pattern
@@ -454,6 +457,29 @@ def _pick_model(message: str, has_attachment: bool = False) -> str:
 - **The `/chat`/`/stream` `tool_runner` loop is the one genuine agent in this codebase** — Claude decides which of the 10 available tools to call, in what order, turn by turn, based on the conversation; that open-endedness is deliberately reserved for the one place (open-ended user questions against a variable toolset) where a fixed code path couldn't realistically be written in advance
 
 **Why this matters:** the differentiated skill here isn't "can prompt an LLM" — it's treating agent output as a claim to verify rather than a result to trust, matching delegation structure to the actual shape of a task instead of defaulting to either "always delegate" or "never delegate," and recognizing that not every reactive or multi-branch piece of logic needs an LLM making the decision. This is the same discipline that runs through every other section of this portfolio — verify before trusting, and default to the cheapest correct mechanism rather than the most impressive-looking one — applied one level up, to coordinating agents instead of coordinating code.
+
+---
+
+### 18. Resilience Engineering — API Failures, a Real Async Bug Found by Live Testing, and Input Validation
+
+Closed out this project's Error Handling & Resilience and Security Fundamentals checklists end to end — not by writing defensive code reflexively, but by testing each failure mode for real before deciding what (if anything) needed to change.
+
+```python
+except (anyio.ClosedResourceError, anyio.BrokenResourceError) as err:
+    # mcp_server.py subprocess died mid-request. No automatic reconnect —
+    # see _mcp_crash_detected()'s docstring for why (anyio cancel scopes
+    # are bound to the asyncio Task that opened them).
+    await _mcp_crash_detected(err)
+    raise HTTPException(status_code=503, detail="...")
+```
+
+- **Verified an SDK's built-in guarantee before adding a redundant one** — the plan for "handle 429 rate limits with backoff" was a hand-rolled retry loop; reading the Anthropic SDK's actual source first showed `AsyncAnthropic` already retries 429/5xx/timeouts internally with exponential backoff. Redirected to the real gap instead — no error handling at all existed for what happens *after* those built-in retries are exhausted — rather than shipping a second, silently-redundant retry layer
+- **A real, subtle async bug, found by killing a live process, not by reasoning about it** — built automatic MCP-subprocess-crash recovery using `AsyncExitStack`, then tested it by actually terminating the subprocess mid-session. Found that `anyio`'s cancel scopes are bound to the asyncio Task that opened them: reconnecting from a request-handler Task corrupts the connection opened in a different Task (the app's startup task), a failure mode invisible from reading the code and only surfaced by three separate live-tested mitigation attempts, each ruled out for a different concrete reason
+- **Explicitly declined to build the "textbook correct" fix, with the reasoning made explicit and reviewable** — the architecturally correct answer (a single dedicated task owning the connection for the app's lifetime) was identified, then deliberately not built after confirming it wasn't proportional to what this specific app needs (rare failure rate, no uptime requirement, manual restart already viable) — shipped the honest, smaller fix instead: clean detection and a clean error, with the tradeoff documented in the code, not silently decided
+- **A tool's declared schema is not an enforcement mechanism** — live-tested a tool's numeric argument with negative, zero, wrong-type, and out-of-range values before assuming validation was unnecessary; 4 of 5 crashed the tool outright despite a JSON Schema saying the argument should be an integer. Added real type/bounds checks across three tools instead of trusting the schema to do that job
+- **A wrong assumption about exception types, caught before shipping** — assumed an error raised inside a separate subprocess would cross the client/server boundary as the same Python exception type it was raised as; live testing showed it arrives reconstructed as a different type entirely, since two OS processes can only communicate via a serialized protocol response, not a shared exception object. Shipped the corrected version, not the first assumption
+
+**Why this matters:** every item here started with a plan that looked reasonable and got revised — sometimes toward more code (the crash detection needed a real fix, not just documentation), sometimes toward less (the "correct" reconnect architecture, once tested, wasn't worth building here). The discipline isn't "always add resilience" or "always keep it simple" — it's treating both directions as claims to test, not defaults to reach for.
 
 ---
 

@@ -169,7 +169,9 @@ against this project's own `get_weather` and `manage_notes` tool schemas.
 | `list_docs` | Lists all files in knowledge_base/ folder | Filesystem |
 | `read_doc` | Reads the full content of a file | Filesystem |
 | `index_docs` | Indexes all docs into ChromaDB | ChromaDB |
-| `search_docs` | Semantic search across indexed docs | ChromaDB |
+| `search_docs` | Semantic search across indexed docs, with a relevance-threshold fallback | ChromaDB |
+
+All tool arguments are now validated before use, not trusted as-is against their declared schema — a schema is a description for Claude, not an enforcement mechanism. `search_docs`'s `n_results` is type-checked and clamped to [1, 20] (confirmed via live testing that 4 of 5 invalid values crashed the tool outright before this was added); `calculate` and `manage_notes` have type checks and length caps.
 
 ---
 
@@ -246,6 +248,8 @@ Here is the step-by-step flow when a user asks a question in the browser:
 
 **If the Anthropic API itself fails** (rate limit, timeout, connection error) at step 7: the SDK's `AsyncAnthropic` client already retries internally with exponential backoff before raising anything. If it still fails after those retries, `/chat` and `/stream` both catch it and return/emit a clean error instead of a raw 500 or a broken stream — see `CLAUDE.md` § API Error Handling.
 
+**If `mcp_server.py` itself crashes** (killed, OOM) at step 10: every route that touches the MCP session (`/chat`, `/stream`, `/resources`, `/resources/content`, `/prompts`, `POST /prompts/{name}`) catches the resulting `anyio.ClosedResourceError`/`BrokenResourceError` and returns a clean 503 instead of a raw 500. Automatic in-process reconnection was attempted and reverted after live testing found it corrupts the connection it's trying to replace — `anyio`'s cancel scopes are bound to the asyncio Task that opened them, and a reconnect triggered from a request handler runs in a different Task than whichever one opened the original connection. Recovery is currently a manual restart — see `_mcp_crash_detected()`'s docstring in `api.py` for the full reasoning.
+
 ---
 
 ## How RAG Works
@@ -273,12 +277,14 @@ user question
 This means a 50-page document becomes searchable. Claude only
 sees the 4 paragraphs most relevant to the question, not the whole file.
 
+**Relevance threshold, actually enforced.** ChromaDB's nearest-neighbor search always returns the top N closest chunks if the collection is non-empty, however weak the actual match — a genuinely unrelated query used to silently get handed the 4 least-bad chunks with no signal they weren't a real match. `search_docs` now checks the similarity threshold (`> 0.2`) `search()`'s own docstring had always named but never applied, and falls back to a clear "no relevant content found" message listing what the knowledge base actually covers.
+
 ---
 
 ## Data Storage
 
 ### SQLite (data/data.db)
-Local file database. Created automatically on first run.
+Local file database. Created automatically on first run. Filename is environment-aware: `data.db` for the default `development` environment (unchanged from this project's original behavior), `data.<environment>.db` for any other `ENVIRONMENT` value — so a real deployment can never share a database with local dev. Indexed on `project`, `created_at`, `model`, and `session_id` — `usage_summary()`'s 6 aggregate queries filter/group by these; not a real bottleneck yet (measured at 2.89ms total for all 6 combined at this project's current row count), added as cheap, correct habit for a table that only grows.
 
 ```
 notes table
@@ -302,7 +308,10 @@ usage_logs table
   output_tokens       — tokens Claude generated
   web_search_requests — count of web_search calls this turn ($0.01 each, folded into estimated_cost_usd)
   estimated_cost_usd  — token costs × pricing table, plus web_search_requests × $0.01
-  tools_used          — JSON array of tool names called this turn (MCP tool_use + server_tool_use blocks)
+  tools_used          — JSON array of tool names called this turn (MCP tool_use + server_tool_use blocks) —
+                         a turn calling the same tool twice has that tool name twice in the array;
+                         "Cost by Tool" attributes estimated_cost_usd once per turn per distinct tool it
+                         used, not once per array mention (a real bug, found and fixed — see Insight #37)
   created_at          — timestamp
 
 credit_config table (singleton — always id=1)

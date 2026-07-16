@@ -148,6 +148,12 @@ ANTHROPIC_API_KEY=sk-ant-...
 > commands default to "UTF-8 with BOM," which silently breaks `python-dotenv` and produces a
 > `"Could not resolve authentication method"` error even though the key is correct.
 
+### Environments (optional)
+No setup needed to just run the app — the default `development` environment behaves exactly as
+above. To run under a different environment, set `ENVIRONMENT` and create a matching
+`.env.<environment>` file (e.g. `.env.production`); it gets its own SQLite database file too
+(`data.<environment>.db`), so it can never share data with local dev. See `CLAUDE.md` for details.
+
 ### Run the web app
 ```powershell
 python -m uvicorn api:app --reload --port 8000 --app-dir src/backend

@@ -1076,6 +1076,39 @@ Phase 24 shipped resources/prompts inside `mcp_server.py`, but a follow-up `/cod
 
 ---
 
+## Phase 26 — Four Learning-Plan Sections Closed, a Real Async Bug Found by Testing (Not Guessing), and a Dashboard Bug Caught by a Sharp Question
+
+### What We Built
+Closed out four full sections of `LEARNING_PLAN.md` end to end — Error Handling & Resilience, Security Fundamentals for AI Apps, Environment Management, and (partially) Observability & Logging — plus an unplanned but valuable detour: investigating a specific number on the cost dashboard that turned out to be a real bug, not a real cost.
+
+### Key Concepts Learned
+
+**A three-times-failed live test is more valuable than a plan that looks correct on paper.** MCP crash detection ("detect and restart automatically") started as a straightforward `AsyncExitStack`-based reconnect. Live-testing it — actually killing the `mcp_server.py` subprocess mid-session, not simulating it — found a real, subtle failure: `anyio`'s cancel scopes are bound to the asyncio Task that opened them, so reconnecting from a request-handler Task corrupts the connection opened in a *different* Task (whichever one ran `lifespan()`'s startup). Three different mitigation attempts (closing the old connection inline, closing it in an isolated background task, skipping the close and just dropping the reference) all failed the same way — the cross-task cancellation cascaded into cancelling the *brand-new* connection, not just the dead old one. The correct architectural fix (a single dedicated long-lived task owning the MCP connection, with request handlers signaling it to reconnect rather than reconnecting inline) was identified and explicitly *not* built, after confirming with Vijay that it wasn't proportional to what this app actually needs — a manually-run local tool with no uptime requirement, where `mcp_server.py`'s tool handlers already catch their own exceptions so a crash is rare, and `uvicorn --reload` already restarts on any file save. Shipped the honest version instead: clean detection and a clean error message across all 6 MCP-touching routes, with a manual restart as the recovery path.
+
+**A tool's own type system doesn't protect you from what actually gets sent.** Security Fundamentals' "validate all tool inputs" item started as a theoretical exercise until live-testing `search_docs`'s `n_results` argument with negative numbers, zero, a string, and a float — 4 of 5 crashed the tool outright with an unhandled exception from deep inside ChromaDB, despite the tool's declared JSON Schema saying `n_results` should be an integer. Claude (or any malformed caller) sending a value that violates the schema doesn't get validated by the schema itself — that's a description for the model, not an enforcement mechanism. Added real type/bounds checks to three tools (`calculate`, `manage_notes`, `search_docs`) after confirming the actual crash, not assuming one might exist.
+
+**Exceptions can't cross a process boundary by reference — only by reconstruction, and that changes their type.** Fixing two raw-error-leak routes (`/resources/content`, `POST /prompts/{name}`) started with an assumption: mcp_server.py raises `ValueError` for its own curated error messages ("Unknown resource URI: ..."), so catching `ValueError` client-side should be the safe, informative case. Live testing showed this was wrong — the exception arrives client-side as `mcp.shared.exceptions.McpError`, not `ValueError`, because the server and client are separate OS processes connected by a pipe; an exception raised in one process is serialized into a JSON-RPC error response and *reconstructed* as a different exception type in the other, not passed by reference. The same message text survives the trip, but the type doesn't — a reminder that "the server raised X" and "the client catches X" are two independent claims across a process boundary, each needing its own verification.
+
+**Structural separation beats a policy you have to remember.** "Never use prod data or credentials in development" existed only as a discipline to hold onto until Environment Management gave it a technical backing: an `ENVIRONMENT` variable now derives a genuinely different database filename and a genuinely different `.env` file per environment, so dev and any other environment can't collide by construction — not because someone remembered not to point them at the same file, but because there's no code path where they'd ever resolve to the same one. Designed carefully so the default (`development`, unset) is byte-for-byte identical to the project's prior behavior, verified against the real `.env` and the real historical `data.db` (83 requests confirmed intact) before trusting the change.
+
+**Measure before optimizing, and the measurement itself can overturn the plan.** Asked to make the cost dashboard "more efficient," the instinct was to add database indexes. Timing the actual aggregate queries first (2.89ms total, at the current row count) showed indexes wouldn't fix anything measurable today — they were added anyway as free, forward-looking hygiene, but explicitly not framed as solving a real problem. The actual measurable waste was somewhere the instinct hadn't looked: `usage.html` was polling every 30 seconds with zero check for whether the browser tab was even visible, burning a full query round for a dashboard nobody was watching. Fixed that instead, and verified it live via Playwright by spying on `setInterval`/`clearInterval` rather than trusting the code read.
+
+**A dashboard number can be internally consistent and still be wrong, and only a human looking closely catches that kind.** Asked what "code execution cost" was on the dashboard — first answer (code_execution is never used, should show $0) was contradicted by live data: 3 calls, $0.1510. The real story: one historical turn (from before a fix was committed) had genuinely called `code_execution` 3 times, but the `by_tool` SQL exploded that turn's `tools_used` JSON array and summed the *turn's* single cost once per array element — tripling a $0.05 charge into $0.15. The adjacent "3 calls" figure was completely correct, which is exactly what made the wrong cost figure next to it look trustworthy; nothing about the math looked broken on its own. Fixed by grouping to (turn, tool) before summing across turns — confirmed general, not a narrow patch, when the same fix silently corrected an unrelated tool (`str_replace_based_edit_tool`) that had the identical pattern. This is the same root lesson as Insight #33 (an estimate has no ground truth until checked against something outside the system) — just one layer more specific: even *within* your own system, an aggregate built by flattening a one-to-many relationship needs the same scrutiny.
+
+### Before vs After
+| | Before | After |
+|---|---|---|
+| Error Handling & Resilience | 3/6 | 6/6 |
+| Security Fundamentals for AI Apps | 2/6 | 6/6 |
+| Environment Management | 0/5 | 5/5 |
+| `search_docs` on an irrelevant query | Silently returned the 4 least-bad chunks, no signal they weren't a real match | Clean "no match" message + what the knowledge base actually covers |
+| MCP subprocess crash | Raw 500 with a full traceback, on every route that touched the session | Clean 503 on all 6 routes; detection confirmed via a real kill-the-subprocess test, not simulated |
+| `.env` / database file | Single environment, no isolation mechanism | `ENVIRONMENT`-aware, structurally separated, default behavior unchanged and verified |
+| Cost dashboard tab in the background | Polled every 30s regardless of visibility | Pauses on hide, refreshes immediately on return (verified via Playwright, not just read) |
+| `code_execution` cost-by-tool figure | $0.1510 (3× a single $0.0503 turn, double-counted) | $0.0503, correctly attributed once, then relabeled to `web_search` since it has no cost model of its own |
+
+---
+
 ## Final Architecture
 
 ```
