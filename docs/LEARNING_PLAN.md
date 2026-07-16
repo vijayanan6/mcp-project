@@ -33,6 +33,7 @@ Last updated: July 2026
 - [x] MCP resources & prompts — the two MCP primitives beyond tools; built, then found via `/code-review` to be unreachable through the running app (server-side only, never wired into `api.py`), fixed
 - [x] Error Handling & Resilience — 429 backoff (SDK-native, verified not hand-rolled), clean errors instead of raw 500s/tracebacks, MCP crash detection (manual recovery, automatic reconnect attempted and reverted after live testing), `search_docs` relevance-threshold fallback, circuit breaker pattern understood and deliberately not built (no failure point in this app has the expensive-repeated-call shape it protects against)
 - [x] Security Fundamentals for AI Apps — tool input validation (found 4/5 invalid `search_docs` inputs genuinely crashed the tool before fixing), path traversal defense explained, 2 real raw-error-leak routes found and fixed, OWASP LLM Top 10 mapped against this codebase with honest named gaps (no system-prompt-extraction defense, no RAG faithfulness evals yet)
+- [x] Environment Management — `ENVIRONMENT`-aware `.env` selection and `DB_PATH` (dev's default behavior byte-for-byte unchanged, verified against real data), structural (not just policy) prod/dev data separation, environment-tagged logging
 
 ### Not Yet Started ❌
 - [ ] pytest — testing framework for MCP tools and FastAPI routes
@@ -113,12 +114,12 @@ Last updated: July 2026
 
 ---
 
-### Environment Management (dev / staging / prod)
-- [ ] Understand why dev, staging, and prod must be separate environments
-- [ ] Use `.env.development`, `.env.production` with different API keys and DB paths
-- [ ] Never use prod data or credentials in development
-- [ ] Understand environment variables vs secrets management (Secret Manager in GCP)
-- [ ] Add environment name to logs so you always know which environment generated a log line
+### Environment Management (dev / staging / prod) ✅
+- [x] Understand why dev, staging, and prod must be separate environments — each answers a different question (dev: safe to break; staging: prod-like enough to catch real bugs; prod: real users/data, real cost of mistakes) and mixing them corrupts the answer. A shared database means a dev experiment can corrupt real usage history; shared credentials mean a leaked dev `.env` (dev machines are less locked down) compromises the real production account.
+- [x] Use `.env.development`, `.env.production` with different API keys and DB paths — `ENVIRONMENT` var (default `development`, unchanged behavior) selects `.env.<environment>` if it exists, else falls back to the plain `.env`; `database.py`'s `DB_PATH` derives a separate filename (`data.<environment>.db`) for any non-development environment. Verified live: default path untouched (real `data.db`, 83 real historical requests, confirmed intact), a temporary `.env.production` correctly loaded its own distinct key instead of the real one.
+- [x] Never use prod data or credentials in development — now structurally enforced, not just a rule to remember: dev and any other environment always resolve to different files by construction, so there's no code path where they could collide.
+- [x] Understand environment variables vs secrets management (Secret Manager in GCP) — an env var is just a name/value pair a process reads; `.env` files are the simplest possible implementation (plain text, gitignored, fine for one developer). Secret Manager adds access control (audit log of every read), rotation, and versioning — and doesn't replace env vars, it *injects* them securely at deploy time (e.g. Cloud Run pulls a secret and sets it as a container env var) instead of the key living in a plaintext file. Not needed yet — no real deployment exists — but this is exactly what Phase 1 (GCP deployment) will need once `ENVIRONMENT=production` means an actual Cloud Run service, not just a different local file.
+- [x] Add environment name to logs so you always know which environment generated a log line — new `_log()` helper in `api.py` prefixes every console log line with `[{ENVIRONMENT}]`, replacing bare `print()` calls throughout (startup, MCP crash detection, alert failures, unexpected route errors).
 
 **Success check:** App runs correctly with a dev `.env` and a prod `.env` — switching between them changes behaviour without code changes
 
