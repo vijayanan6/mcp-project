@@ -50,6 +50,26 @@ app = Server("learning-mcp-server")
 # Initialize the SQLite database on startup
 init_db()
 
+_KNOWLEDGE_BASE_DIR = Path(__file__).parent.parent.parent / "knowledge_base"
+_SUPPORTED_DOC_SUFFIXES = {".txt", ".md", ".csv", ".json", ".py", ".html", ".xml", ".pdf"}
+
+# search()'s own docstring documents distance < 0.8 (similarity > 0.2) as the
+# intended "relevant" cutoff, but never enforced it — every call returned the
+# nearest chunks regardless of how weak the actual match was. This is the same
+# threshold, now actually applied in search_docs's fallback below.
+_SEARCH_RELEVANCE_THRESHOLD = 0.2
+
+
+def _knowledge_base_files() -> list[str]:
+    """Sorted list of supported document filenames in knowledge_base/. Shared
+    by list_docs, the knowledgebase:// resource, and search_docs's low-
+    relevance fallback — previously duplicated inline in the first two."""
+    _KNOWLEDGE_BASE_DIR.mkdir(exist_ok=True)
+    return sorted(
+        f.name for f in _KNOWLEDGE_BASE_DIR.iterdir()
+        if f.is_file() and f.suffix in _SUPPORTED_DOC_SUFFIXES
+    )
+
 
 @app.list_tools()
 async def list_tools() -> list[types.Tool]:
@@ -354,8 +374,19 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
             )]
 
         chunks = search(query, n_results=n)
-        if not chunks:
-            return [types.TextContent(type="text", text="No relevant content found for that query.")]
+        # ChromaDB's nearest-neighbor search always returns *something* if the
+        # collection is non-empty, however weak the actual match — search()'s
+        # own docstring names distance < 0.8 (similarity > 0.2) as "relevant"
+        # but never enforced it, so a genuinely unrelated query silently got
+        # handed the 4 least-bad chunks with no signal they weren't a real
+        # match. Now checked against that same documented threshold.
+        if not chunks or max(c["score"] for c in chunks) < _SEARCH_RELEVANCE_THRESHOLD:
+            available = _knowledge_base_files()
+            hint = f" This knowledge base currently covers: {', '.join(available)}." if available else ""
+            return [types.TextContent(
+                type="text",
+                text=f"No sufficiently relevant content found for '{query}'.{hint}",
+            )]
 
         parts = []
         for i, chunk in enumerate(chunks, 1):
@@ -365,11 +396,7 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
 
     # ── Tool: list_docs ───────────────────────────────────────────────────
     if name == "list_docs":
-        docs_dir = Path(__file__).parent.parent.parent / "knowledge_base"
-        docs_dir.mkdir(exist_ok=True)  # create folder if it doesn't exist yet
-
-        supported = {".txt", ".md", ".csv", ".json", ".py", ".html", ".xml", ".pdf"}
-        files = sorted(f.name for f in docs_dir.iterdir() if f.is_file() and f.suffix in supported)
+        files = _knowledge_base_files()
 
         if not files:
             return [types.TextContent(
@@ -468,10 +495,7 @@ async def read_resource(uri: AnyUrl) -> str:
     """Called when a client reads a resource by the URI returned above."""
 
     if uri.scheme == "knowledgebase":
-        docs_dir = Path(__file__).parent.parent.parent / "knowledge_base"
-        docs_dir.mkdir(exist_ok=True)
-        supported = {".txt", ".md", ".csv", ".json", ".py", ".html", ".xml", ".pdf"}
-        files = sorted(f.name for f in docs_dir.iterdir() if f.is_file() and f.suffix in supported)
+        files = _knowledge_base_files()
         if not files:
             return "No documents found in the knowledge_base/ folder."
         return "\n".join(f"  • {f}" for f in files)
