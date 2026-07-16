@@ -420,7 +420,7 @@ Multi-turn sessions stored in SQLite. Full history saved to DB; only the last 10
 
 ---
 
-### 17. Multi-Agent Orchestration — Directing Isolated Agents, Not Just Prompting One
+### 17. Multi-Agent Orchestration & Workflow Design — Directing Agents, and Knowing When Not To
 
 Beyond using an AI assistant conversationally, designed and ran actual multi-agent pipelines against real work on this repo — with deliberate structural constraints, not just instructions the agents were trusted to follow.
 
@@ -439,7 +439,21 @@ an SSE cleanup path):
 - **Delegation scoped by actual context need, not applied by default** — used a fully isolated `Explore` subagent (no shared memory with the driving conversation) to investigate a separate, real GitHub issue before fixing it, since that task benefited from a scoped, self-contained brief and a checkable file:line-cited report; used direct execution (no subagent) for smaller, linear fixes afterward, since spawning an agent per small fix would have added context-reload overhead without a matching benefit — the orchestration pattern was chosen per-task, not applied uniformly
 - **Verified an SDK's actual guarantee before stacking a redundant layer on top of it** — before implementing a planned retry-with-backoff mechanism for Anthropic API rate limits, read the installed SDK's source directly and found `AsyncAnthropic` already retries 429s/5xx/timeouts internally with exponential backoff and jitter by default; building the originally-planned retry loop anyway would have shipped two silently-stacked retry layers. Redirected the actual fix to the real gap — a clean failure path once those built-in retries are exhausted, which had no error handling at all
 
-**Why this matters:** the differentiated skill here isn't "can prompt an LLM" — it's treating agent output as a claim to verify rather than a result to trust, matching delegation structure to the actual shape of a task instead of defaulting to either "always delegate" or "never delegate," and using tool-access scoping as a real engineering control rather than a documentation-only convention. This is the same discipline that runs through every other section of this portfolio — verify before trusting — applied one level up, to coordinating agents instead of coordinating code.
+**Knowing when *not* to use agent autonomy — workflows vs. agents as a real architectural choice, not just terminology:** a workflow is deterministic code deciding the control flow (cheap, predictable, testable); an agent is the LLM deciding it, turn by turn, until it decides it's done (flexible, but harder to reason about and more expensive per task). This project draws that line deliberately rather than routing everything through an LLM by default:
+
+```python
+# Routing workflow — fixed code, no LLM in the decision itself
+def _pick_model(message: str, has_attachment: bool = False) -> str:
+    if has_attachment or len(message) > 120 or any(s in message.lower() for s in _COMPLEX_SIGNALS):
+        return "claude-sonnet-4-6"
+    return "claude-haiku-4-5"
+```
+
+- **`_pick_model()` is a routing workflow** — a fixed heuristic picks the model *before* the agent loop ever starts; no LLM call decides which model to use
+- **`_run_alert_checks()` is a pure workflow with no LLM anywhere in it** — five independently cooldown-gated Discord alert checks, entirely deterministic threshold/date comparisons against SQLite state; not everything that looks "agentic" (reactive, multi-branch, stateful) actually benefits from an LLM in the loop
+- **The `/chat`/`/stream` `tool_runner` loop is the one genuine agent in this codebase** — Claude decides which of the 10 available tools to call, in what order, turn by turn, based on the conversation; that open-endedness is deliberately reserved for the one place (open-ended user questions against a variable toolset) where a fixed code path couldn't realistically be written in advance
+
+**Why this matters:** the differentiated skill here isn't "can prompt an LLM" — it's treating agent output as a claim to verify rather than a result to trust, matching delegation structure to the actual shape of a task instead of defaulting to either "always delegate" or "never delegate," and recognizing that not every reactive or multi-branch piece of logic needs an LLM making the decision. This is the same discipline that runs through every other section of this portfolio — verify before trusting, and default to the cheapest correct mechanism rather than the most impressive-looking one — applied one level up, to coordinating agents instead of coordinating code.
 
 ---
 
