@@ -258,15 +258,33 @@ def usage_summary(project: str | None = None) -> dict:
             LIMIT 10
         """, params).fetchall()
 
+        # A turn that calls the same tool more than once (e.g. tools_used =
+        # ["code_execution","web_search","code_execution","web_search","code_execution"])
+        # used to have its single estimated_cost_usd summed once per repeated
+        # mention of that tool name -- inflating cost_usd/avg_cost_usd by however
+        # many times the tool was called in that one turn (found via a real
+        # example: 3 code_execution calls in 1 turn reported as 3x that turn's
+        # cost, $0.1510 instead of the real $0.0503). `calls` was already
+        # correct (3 real invocations did happen). Fixed by first grouping to
+        # (turn, tool) so a turn's cost is attributed once per distinct tool it
+        # used, then aggregating those per-turn attributions across turns.
         by_tool = conn.execute(f"""
             SELECT
-                json_each.value             AS tool_name,
-                COUNT(*)                    AS calls,
-                SUM(ul.estimated_cost_usd)  AS cost_usd,
-                AVG(ul.estimated_cost_usd)  AS avg_cost_usd
-            FROM usage_logs ul, json_each(ul.tools_used)
-            {where.replace('WHERE', 'WHERE ul.project = ? AND') if project else ''}
-            GROUP BY json_each.value
+                tool_name,
+                SUM(calls)     AS calls,
+                SUM(cost_usd)  AS cost_usd,
+                AVG(cost_usd)  AS avg_cost_usd
+            FROM (
+                SELECT
+                    ul.id                       AS log_id,
+                    json_each.value             AS tool_name,
+                    COUNT(*)                    AS calls,
+                    MAX(ul.estimated_cost_usd)  AS cost_usd
+                FROM usage_logs ul, json_each(ul.tools_used)
+                {where.replace('WHERE', 'WHERE ul.project = ? AND') if project else ''}
+                GROUP BY ul.id, json_each.value
+            )
+            GROUP BY tool_name
             ORDER BY calls DESC
         """, params).fetchall()
 
