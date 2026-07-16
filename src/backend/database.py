@@ -10,12 +10,20 @@ Tables:
   usage_logs — stores token usage and estimated cost per message
 """
 import json
+import os
 import sqlite3
 from datetime import datetime
 from pathlib import Path
 
-# Database file lives in data/ at the project root (src/backend/database.py -> up 3 levels)
-DB_PATH = Path(__file__).parent.parent.parent / "data" / "data.db"
+ENVIRONMENT = os.environ.get("ENVIRONMENT", "development")
+
+# Database file lives in data/ at the project root (src/backend/database.py -> up 3 levels).
+# "development" (the default, when ENVIRONMENT is unset) keeps the exact filename this
+# project has always used — data.db — so existing local data is never silently orphaned
+# by this change. Any other environment name gets its own separate file, so a real prod
+# deployment (once Phase 1's GCP work happens) can never share a database with local dev.
+_db_filename = "data.db" if ENVIRONMENT == "development" else f"data.{ENVIRONMENT}.db"
+DB_PATH = Path(__file__).parent.parent.parent / "data" / _db_filename
 DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 
 

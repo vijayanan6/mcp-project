@@ -26,7 +26,21 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from dotenv import load_dotenv
-load_dotenv()
+
+ENVIRONMENT = os.environ.get("ENVIRONMENT", "development")
+
+# "development" (the default) keeps today's exact behavior — load_dotenv()
+# with no args, finding the existing plain .env this project has always used
+# — so nothing breaks for the current single-environment setup. Only an
+# explicitly different ENVIRONMENT switches to a same-named .env.<environment>
+# file, and falls back to the plain .env if that file doesn't exist yet
+# (e.g. ENVIRONMENT=production set but no .env.production created), rather
+# than silently starting with zero config loaded.
+_env_file = Path(__file__).parent.parent.parent / f".env.{ENVIRONMENT}"
+if ENVIRONMENT != "development" and _env_file.exists():
+    load_dotenv(_env_file)
+else:
+    load_dotenv()
 
 import anyio
 import httpx
@@ -56,6 +70,14 @@ SPIKE_MULTIPLIER = 3.0                         # today's spend vs trailing avera
 SPIKE_MIN_ABSOLUTE = 1.00                      # floor so a near-zero average can't trigger noise
 
 SERVER_SCRIPT = str(Path(__file__).parent / "mcp_server.py")
+
+
+def _log(message: str) -> None:
+    """print(), prefixed with the current environment. Every log line in this
+    file should go through this rather than a bare print() — a log line with
+    no environment tag is useless once more than one environment exists
+    (which server printed this? which one alerted?)."""
+    print(f"[{ENVIRONMENT}] {message}")
 
 
 # ── MCP connection: startup and crash recovery share this ────────────────────
@@ -130,9 +152,9 @@ async def _mcp_crash_detected(err: Exception) -> None:
     is the current recovery path — this function's job is only to make sure
     that's a clean, understood failure, not a raw traceback.
     """
-    print(f"[mcp] Connection lost ({type(err).__name__}: {err}). "
-          f"A manual server restart is currently required to recover — see "
-          f"_mcp_crash_detected()'s docstring for why automatic reconnect isn't implemented.")
+    _log(f"[mcp] Connection lost ({type(err).__name__}: {err}). "
+         f"A manual server restart is currently required to recover — see "
+         f"_mcp_crash_detected()'s docstring for why automatic reconnect isn't implemented.")
 
 
 async def _call_mcp(coro):
@@ -183,9 +205,9 @@ async def lifespan(app: FastAPI):
     indexed = index_all()
     stats = get_stats()
     if indexed:
-        print(f"Indexed {len(indexed)} doc(s) -> {stats['total_chunks']} chunks in ChromaDB")
+        _log(f"Indexed {len(indexed)} doc(s) -> {stats['total_chunks']} chunks in ChromaDB")
 
-    print(f"MCP server ready. Tools: {app.state.tool_names}")
+    _log(f"MCP server ready. Tools: {app.state.tool_names}")
     yield
     # Tear down whichever MCP connection is current (startup's original one,
     # or a later crash-recovery reconnect) — AsyncExitStack.aclose() is the
@@ -272,7 +294,7 @@ async def read_mcp_resource(uri: str):
         # Anything else is unexpected — log the real error server-side, but
         # never forward its raw message, which could leak internal paths,
         # library internals, or other implementation details to the client.
-        print(f"[resources/content] Unexpected error: {type(err).__name__}: {err}")
+        _log(f"[resources/content] Unexpected error: {type(err).__name__}: {err}")
         raise HTTPException(status_code=500, detail="An unexpected error occurred reading this resource.")
     content = "".join(c.text for c in result.contents if hasattr(c, "text"))
     return {"uri": uri, "content": content}
@@ -314,7 +336,7 @@ async def invoke_mcp_prompt(name: str, body: PromptInvocation):
         # "Unknown prompt: 'foo'") crosses the process boundary as McpError.
         raise HTTPException(status_code=400, detail=str(err))
     except Exception as err:
-        print(f"[prompts/{{name}}] Unexpected error: {type(err).__name__}: {err}")
+        _log(f"[prompts/{{name}}] Unexpected error: {type(err).__name__}: {err}")
         raise HTTPException(status_code=500, detail="An unexpected error occurred invoking this prompt.")
     return {
         "description": result.description,
@@ -574,7 +596,7 @@ async def _send_discord(message: str) -> bool:
             resp.raise_for_status()
         return True
     except Exception as e:
-        print(f"[alert] Discord webhook failed: {e}")
+        _log(f"[alert] Discord webhook failed: {e}")
         return False
 
 
@@ -756,7 +778,7 @@ async def _run_alert_checks() -> None:
         try:
             await check()
         except Exception as e:
-            print(f"[alert] {check.__name__} failed: {e}")
+            _log(f"[alert] {check.__name__} failed: {e}")
 
 
 @app.post("/chat")
