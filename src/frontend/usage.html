@@ -620,8 +620,34 @@
     }
   }
 
+  // Auto-refresh every 30s, but only while the tab is actually visible — a
+  // background tab was previously still firing a full query round every 30s
+  // for a dashboard nobody was looking at. Pausing when hidden and refreshing
+  // immediately on return (rather than waiting up to 30s for stale data to
+  // catch up) is strictly better on both counts.
+  let pollInterval = null;
+
+  function startPolling() {
+    if (pollInterval) return;
+    pollInterval = setInterval(load, 30000);
+  }
+
+  function stopPolling() {
+    clearInterval(pollInterval);
+    pollInterval = null;
+  }
+
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) {
+      stopPolling();
+    } else {
+      load();
+      startPolling();
+    }
+  });
+
   load();
-  setInterval(load, 30000);
+  startPolling();
 </script>
 </body>
 </html>
