@@ -1042,6 +1042,40 @@ A 📎 file-attach feature for the chat UI — users can send one image or PDF a
 
 ---
 
+## Phase 25 — Closing the Loop: MCP Wiring, a Two-Agent Review, and the Entire Code-Review Backlog
+
+### What We Built
+Phase 24 shipped resources/prompts inside `mcp_server.py`, but a follow-up `/code-review` had found 10 real findings across the attachment feature and that new primitive — filed as GitHub issues #2–#11 and left open. This phase closed every one of them: wired resources/prompts into the actually-running app (#4), added graceful failure handling around Anthropic API errors (no issue number — a gap found while working the Error Handling & Resilience section of `LEARNING_PLAN.md`), then worked through the remaining 8 issues one at a time, each verified against real behavior before committing. Also used the work as a live teaching vehicle for agent-directing skills: one exercise delegated an investigation to an isolated `Explore` subagent, another ran a genuine two-agent draft/review pipeline (separate drafter and reviewer agents, the reviewer's tools restricted to read-only so it structurally couldn't "fix" instead of critique) on Issue #8.
+
+### Key Concepts Learned
+
+**A confident-sounding plan is still worth verifying before building.** The obvious fix for "handle 429 rate limits with backoff" was to hand-roll a retry loop around `tool_runner`. Before writing it, reading `anthropic/_base_client.py` directly (not assuming from the exception class names) showed `AsyncAnthropic`'s default `max_retries=2` already retries 429/5xx/timeout/connection errors internally with exponential backoff and jitter, honoring `Retry-After`. The actual gap was narrower than the curriculum item's name suggested: a clean failure path *after* those retries exhaust, not a second retry mechanism stacked on top of one that already existed.
+
+**A code-review finding lives in the file it was found in, not always in one function.** Issues #6 and #7 both landed in `_validate_attachment()` — fixed together in one pass rather than two separate diffs touching the same 15 lines, which would have doubled the chance of one fix's edit invalidating the other's line numbers mid-flight.
+
+**An exact answer beats an approximation when the approximation risks a false rejection.** Fixing #6 (reject oversized attachments before decoding them) didn't need an estimate — base64's fixed 3-byte-to-4-char expansion ratio means the decoded size is derivable *exactly* from the encoded string's length and padding, with zero risk of wrongly rejecting a payload that would have actually passed. Verified with a ~200MB-equivalent fake payload rejected in ~98ms, almost all of it just Python string construction, not decoding.
+
+**Deduplication bugs come from parallel evolution, and the fix is structural, not cosmetic.** Both #9 (missing orphan-window guard in `/chat`) and #10 (duplicated citation formatting) existed because `/stream` picked up logic that `/chat` never got an equivalent copy of. The fix in both cases was the same shape: hoist the shared logic to module scope (`_safe_window()`, `_text_with_citations()`) so there's exactly one implementation for both routes to call, not a second copy for someone to remember to keep in sync by hand.
+
+**A two-agent orchestration is only a real check if the reviewer structurally cannot cheat.** The Issue #8 review used an `Explore` agent — no `Edit`/`Write` tools available at all — specifically so "review, don't fix" was enforced by the harness, not by hoping the agent followed an instruction. It caught a real, non-obvious correctness argument (why catching `asyncio.CancelledError` there is safe, tied to `_consume()`'s own exception-handling shape) that the drafter's own self-report hadn't mentioned.
+
+**`git commit -m "...Closes #N..."` auto-closes the issue the moment it reaches `main` — before any planned follow-up comment runs.** Hit this live on Issue #8: the commit closed the issue on push, and the scripted `gh issue close --comment "..."` failed with "already closed" a few seconds later. The review summary still needed posting — just as a plain `gh issue comment`, not a close.
+
+**Verification cost should match the size of the claim being verified, not a fixed ritual.** #5 (route the pricing-fallback warning through Discord) got a full behavioral test against real code — an obviously-fake model name, `_send_discord` monkeypatched to capture instead of actually notifying, test rows deleted and the deletion re-verified afterward. #6's "no thread-offload needed" claim got a timing test instead of a mocked one, since the actual question was "is this fast enough," not "does this code path execute." Matching verification method to what's actually in doubt, rather than running the same checklist regardless of stakes.
+
+### Before vs After
+| | Before | After |
+|---|---|---|
+| GitHub issues open | 10 (#2–#11) | 0 |
+| MCP resources/prompts reachable via the running app | No — only via a standalone script or Inspector | Yes — `GET /resources`, `GET /resources/content`, `GET /prompts`, `POST /prompts/{name}` |
+| Anthropic API error handling in `/chat` | None — any SDK error 500'd with a raw traceback | Catches `APIError`, returns a clean `HTTPException(503, ...)` |
+| Attachment-only message (no typed text) routing | Silently routed to Haiku | Always routed to Sonnet |
+| `_safe_window()` / citation formatting | `/stream`-only closure; duplicated inline in `/chat` and `/stream` respectively | Module-level, shared by both routes |
+| Attachment limits | Hardcoded independently in `api.py`, `chat.html` JS, and the file input's `accept` attribute | Served from `GET /attachment-limits`, fetched once by the frontend |
+| Unrecognized-model pricing gap | `print()`-only, invisible unless tailing server logs | Discord alert via a new `pricing_warnings` table, one-time per model |
+
+---
+
 ## Final Architecture
 
 ```

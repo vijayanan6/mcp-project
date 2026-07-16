@@ -327,6 +327,22 @@ Nothing about writing the resource handler itself would have surfaced this — t
 
 The generalizable version: any identifier that has to satisfy an external format spec — a URI scheme, a hostname, an environment variable name, a database column name — has rules that don't always match what "looks natural" for the domain you're modeling. When a name is going to flow into a strict parser or validator you don't control, test that exact string against that exact validator before writing the surrounding code, rather than discovering the constraint only when something downstream throws.
 
+## 35. Verify a Library's Guarantee Before Building a Second One On Top of It
+
+The task was "handle Anthropic API rate limits with backoff" — an unstarted item on the Error Handling & Resilience checklist. The obvious implementation was a retry loop wrapping `tool_runner`'s iteration: catch the rate-limit exception, sleep, retry, repeat. Before writing it, reading `anthropic/_base_client.py` directly — the actual installed SDK source, not the exception class names or a remembered impression of how the library probably works — showed `AsyncAnthropic` already retries 429s, 5xx errors, timeouts, and connection errors internally, with exponential backoff, jitter, and `Retry-After` header support, by default (`max_retries=2`).
+
+Building the planned retry loop anyway would have produced two stacked retry layers, one of them completely redundant and invisible in normal operation — it would only ever have mattered in the rare case where its behavior actually diverged from the SDK's own, which is exactly the kind of latent complexity that's expensive to reason about later and cheap to avoid now. The real, narrower gap turned out to be one layer over: what happens *after* the SDK's built-in retries are exhausted. `/chat` had no error handling around the API call at all, so a still-failing request after those retries propagated as a raw 500 with a full traceback. That's a different, smaller fix than the one originally planned.
+
+The generalizable version: a task description that names a well-known problem ("handle rate limits," "add caching," "retry on failure") is not evidence that the problem is actually unsolved in your stack — mature SDKs often already handle the well-known case, and the task's real gap is usually narrower and more specific than its name suggests. Reading the dependency's actual source for the specific guarantee in question — not just trusting that "the SDK probably handles this somehow" — is what turns "probably redundant" into a confirmed, cheap decision not to build something.
+
+## 36. A Committed Instruction Can Fire Before Your Next Command Does
+
+A GitHub issue was being fixed and reviewed through a two-agent pipeline: a drafter implemented the fix, a read-only reviewer independently verified it, and the plan was to commit with `git commit -m "...Closes #8..."`, push, then run `gh issue close --comment "<review summary>"` to post the review's findings alongside the close. The commit and push ran first, as planned. The `gh issue close` command then failed outright — "already closed" — because GitHub's own auto-close-on-push behavior had already closed the issue the moment `Closes #8` reached the default branch, seconds before the scripted close command tried to do the same thing a second time.
+
+Nothing was actually broken — the issue *was* closed, correctly, with the right commit attached — but the review summary that was supposed to accompany the close never posted, since the command carrying it errored out before reaching the comment step. The fix was simple once noticed: post the summary as a plain `gh issue comment` instead of bundling it into a close that had already implicitly happened.
+
+The generalizable version: a `Closes #N` (or `Fixes #N`, `Resolves #N`) trailer in a commit message aimed at a repo's default branch is not just documentation — GitHub treats it as an executable instruction that fires automatically on push, before any command you queue up afterward gets a chance to run against the issue's still-open state. Any follow-up automation targeting that issue (closing it again, attaching a label, posting a summary as part of a close) needs to assume the close has already happened, not that it's still pending.
+
 ---
 
 ## The Core Takeaway

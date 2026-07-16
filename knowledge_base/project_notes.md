@@ -20,8 +20,8 @@ api.py (FastAPI web server)
   ├──► Claude Sonnet 4.6 / Haiku 4.5 (Anthropic API — routed by query complexity)
   │         │ tool calls
   │         ▼
-  ├──► mcp_server.py (8 MCP tools)
-  │         ├──► database.py     → SQLite (notes, sessions, usage_logs, credit_config)
+  ├──► mcp_server.py (8 MCP tools, 2 resource kinds, 1 prompt)
+  │         ├──► database.py     → SQLite (notes, sessions, usage_logs, credit_config, pricing_warnings)
   │         ├──► rag.py          → ChromaDB (semantic search)
   │         └──► knowledge_base/ → documents (txt, md, PDF)
   │
@@ -31,7 +31,9 @@ api.py (FastAPI web server)
   │
   ├──► image/PDF attachments (Messages API content blocks — ephemeral, one per turn, PDF citations)
   │
-  ├──► Discord webhook (mobile alerts — low balance, spend spike, tool budget, daily digest)
+  ├──► /resources, /prompts (GET/POST routes — MCP resources/prompts, reachable from the running app, not just a standalone script)
+  │
+  ├──► Discord webhook (mobile alerts — low balance ×2, spend spike, tool budget, daily digest, missing pricing data)
   │
   └──► agent.py (original CLI — still works)
 ```
@@ -113,6 +115,29 @@ Messages API content-block feature, not one of the 10 tools above.
 26. `git checkout -b feature/name` → code → commit → merge → push
 27. `.gitignore` protects sensitive files and local databases from being uploaded
 28. A pre-commit secret scanner (gitleaks) and SSH commit signing catch what code review can't
+29. A `Closes #N` trailer in a commit message auto-closes the issue the moment it reaches `main`
+    — before any follow-up command you queue up (like posting a review summary) gets to run
+    against the issue's still-open state
+
+### Reliability & Verification
+30. A well-known problem ("handle rate limits") doesn't mean it's unsolved in your stack —
+    `AsyncAnthropic` already retries 429/5xx/timeouts internally with backoff; verified by
+    reading the SDK's actual source before building a second, redundant retry loop on top of it
+31. A feature can be "verified" via a standalone test script and still be completely unreachable
+    in the real running app — MCP resources/prompts worked perfectly in isolated testing while
+    `api.py` never actually called `list_resources()`/`list_prompts()` at all
+32. Deduplication bugs come from parallel evolution: `/chat` and `/stream` each grew their own
+    copy of the same guard/formatting logic. Fix is structural (hoist to one shared function),
+    not cosmetic (keep two copies "in sync" by hand)
+
+### Multi-Agent Orchestration
+33. A subagent shares zero context with the conversation that spawned it — the whole quality of
+    what it returns depends on how self-contained the brief you give it is
+34. Tool access is a real architectural control, not just an instruction — a review agent given
+    no Edit/Write tools is *structurally* unable to fix instead of critique, not just told not to
+35. Trust but verify applies to agent output too — independently re-checked a drafter's diff via
+    `git diff` rather than its self-report, and had the reviewer re-read the live file itself
+    rather than trust the diff it was handed
 
 ---
 
@@ -179,8 +204,8 @@ python -m uvicorn api:app --reload --port 8000 --app-dir src/backend
 ---
 
 ## Next Steps to Explore
-- Added image/PDF attachment support with PDF citations, and an available-credit line in the
-  Discord daily digest, today
+- Remaining Error Handling & Resilience items: MCP server crash detection/restart,
+  `search_docs` fallback behavior, circuit breaker concept
 - Replace mock weather with real OpenWeatherMap API
 - Add user authentication (JWT tokens)
 - Switch from SQLite to PostgreSQL

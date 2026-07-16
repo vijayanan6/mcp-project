@@ -15,7 +15,8 @@ A full-stack AI application built entirely from first principles — no LangChai
 - **A recurring engineering discipline, not a one-off**: across at least six separate features, the same pattern shows up — verify the actual behavior of a dependency (an SDK, an API response, a validator) against a live test before trusting an assumption, because self-consistent code can still be systematically wrong. This caught real bugs in cost tracking, citation parsing, MCP resource URIs, and model-routing compatibility — see sections 1–6 below.
 - **Automated quality gates, not manual spot-checks**: a 12/12 (100%) passing eval suite that scores tool selection and model routing on every prompt change, run as a gate before shipping.
 - **Production-grade cost and security discipline**: token-level cost tracking with credit/burn-rate forecasting and Discord mobile alerts; secret-scanning pre-commit hooks; SSH-signed, GitHub-verified commits; dependency vulnerability audits with root-cause tracing (not blanket patching).
-- **Continuously extended, not a frozen demo** — most recently: ephemeral multimodal chat attachments with PDF citations, and the full MCP protocol surface (tools *and* resources *and* prompts, not just tools).
+- **Continuously extended, not a frozen demo** — most recently: ephemeral multimodal chat attachments with PDF citations, the full MCP protocol surface (tools *and* resources *and* prompts, not just tools), and a full code-review backlog (10 real findings, tracked as GitHub issues) closed end-to-end with a verified fix and a live regression check for every single one.
+- **Directs multi-agent workflows, not just single-turn prompts** — designs and runs agent pipelines with deliberate structural constraints (e.g. a code-review "reviewer" agent given read-only tools so it's architecturally incapable of silently fixing instead of critiquing), not just sequential chat turns. See section 17.
 
 ---
 
@@ -165,8 +166,9 @@ async def list_resources() -> list[types.Resource]:
 - **Caught an RFC violation before it ever reached the server** — the natural resource URI, `knowledge_base://files`, silently looked correct in code but fails `pydantic.AnyUrl` validation: RFC 3986 disallows underscores in URI scheme names. Verified with a two-line test script before touching the real handler; renamed to `knowledgebase://`
 - **Adapted a generic example to this project's actual schema, not copied it literally** — the natural tutorial-style resource URI is `note://1`, implying numeric IDs; this project's notes are keyed by `title` (a `TEXT PRIMARY KEY`). Verified via a live test that `urllib.parse.quote`/`unquote` round-trips correctly through `pydantic.AnyUrl` for titles containing spaces, mixed case, and slashes, before building the real `note://<title>` resource
 - **Verified end-to-end against a tool whose own auth blocked the obvious path** — MCP Inspector requires a session token printed to its launching terminal, which blocked scripted verification. Rather than fight the browser auth flow, wrote a standalone script using `mcp.ClientSession` — the same client class this project's own `api.py` uses — to call `list_resources`/`read_resource`/`list_prompts`/`get_prompt` directly, confirming correctness with the identical protocol calls Inspector's UI makes
+- **Caught, via a follow-up `/code-review`, that "verified with a standalone script" and "reachable through the actual running app" are different claims** — the server-side implementation above was correct, but `api.py`'s `lifespan()` never called `list_resources()`/`list_prompts()` at all, so the entire feature was unreachable through the deployed chat app — dead code from the running system's perspective, only ever exercised by the standalone test script. Fixed by keeping the MCP session on `app.state` and adding four routes that call it live; verified by hitting all four against the actually-running server (`GET /resources`, `GET /resources/content`, `GET /prompts`, `POST /prompts/{name}`), not just re-running the original script
 
-**Why this matters:** two of the three bugs here were "obviously correct" code that failed at a boundary the code itself never suggested existed — a valid-looking URI string, a plausible-looking ID scheme. Both were caught by testing the exact assumption against the real validator or the real database schema before writing the surrounding logic, not by staring at the code harder.
+**Why this matters:** three of the four bugs here were "obviously correct" code that failed at a boundary the code itself never suggested existed — a valid-looking URI string, a plausible-looking ID scheme, and a feature that worked perfectly in isolated testing while being completely unreachable in production. All three were caught by testing the exact assumption against the real validator, the real database schema, or the real running app — not by staring at the code harder.
 
 ---
 
@@ -256,7 +258,7 @@ System prompt cached after message 1 → near-free on every subsequent turn
 
 ### 7. Mobile Alerting — Designing for Real Runtime Constraints, Not the Textbook Pattern
 
-Directly extends the cost dashboard above: turned its passive in-browser alert badge into four real-time Discord push notifications — two-tier low-balance (warning/critical), a spend-spike detector, a per-tool budget cap, and a daily digest — landing on a phone instead of requiring the dashboard tab to be open.
+Directly extends the cost dashboard above: turned its passive in-browser alert badge into five real-time Discord push notifications — two-tier low-balance (warning/critical), a spend-spike detector, a per-tool budget cap, a daily digest, and a missing-pricing-data alert — landing on a phone instead of requiring the dashboard tab to be open.
 
 ```python
 async def _maybe_send_low_credit_alert() -> None:
@@ -273,6 +275,7 @@ async def _maybe_send_low_credit_alert() -> None:
 - **Found a stateful bug that per-tier testing couldn't catch** — testing "does warning fire" and "does critical fire" both passed, but the transition of dropping straight from normal into critical (skipping the warning zone) left the warning tier's cooldown stale, which would have silently suppressed a legitimate re-warn on a later partial recovery. Caught only by testing the actual transition sequence, then fixed and re-verified
 - **Handled a live secret end-to-end safely** — when a real Discord webhook URL arrived directly in the conversation, verified `.gitignore` coverage structurally (`git check-ignore`) and confirmed the write with `grep -c` rather than ever printing the value back
 - **Test discipline against production data with no staging copy** — every alert path (2 balance tiers, spike, per-tool budget, digest) was tested by capturing exact current state, temporarily perturbing only what was needed to force each condition, verifying the effect via direct query, then restoring the original values exactly — zero corruption to real credit tracking across all four test runs
+- **A silent failure mode found its own recurrence, and got caught before shipping again** — a code review flagged that `_estimate_cost()`'s fallback for an unrecognized model only printed to stdout, the exact "invisible unless you're tailing server logs" shape as the original Haiku pricing-drift bug this warning was built to catch. Added a fifth Discord alert (one-time per model, not a daily cooldown — this is a config gap, not a spend threshold) and verified it end-to-end against real code with an obviously-fake model name, `_send_discord` monkeypatched to capture instead of actually notifying, and the fake test rows deleted with the deletion explicitly re-verified afterward
 
 **Why this matters:** the highest-value bug here wasn't a syntax error or a missing null check — it was a design assumption (always-on process) that would have shipped invisibly broken, and a state-transition gap that per-state testing structurally cannot find. Both required stepping back from "does this feature work" to "does this feature's design match the environment it actually runs in."
 
@@ -405,7 +408,7 @@ Multi-turn sessions stored in SQLite. Full history saved to DB; only the last 10
 - Lifespan hooks keep the MCP server alive across all requests (not spawned per request)
 - Pydantic request validation, async route handlers
 - `app.state` shares tools and API client across all requests
-- REST endpoints: `GET /`, `GET /tools`, `POST /chat`, `POST /stream`, `GET /sessions`, `DELETE /session/{id}`
+- REST endpoints: `GET /`, `GET /tools`, `GET /resources`, `GET /resources/content`, `GET /prompts`, `POST /prompts/{name}`, `GET /attachment-limits`, `POST /chat`, `POST /stream`, `GET /sessions`, `DELETE /session/{id}`
 
 ---
 
@@ -414,6 +417,29 @@ Multi-turn sessions stored in SQLite. Full history saved to DB; only the last 10
 - Text-based PDFs: extracted directly via `pypdf`
 - Scanned PDFs: `pymupdf` renders pages to images at 300 DPI → `pytesseract` extracts text
 - Path traversal protection on all file access
+
+---
+
+### 17. Multi-Agent Orchestration — Directing Isolated Agents, Not Just Prompting One
+
+Beyond using an AI assistant conversationally, designed and ran actual multi-agent pipelines against real work on this repo — with deliberate structural constraints, not just instructions the agents were trusted to follow.
+
+```
+Two-agent draft/review pipeline on a real bug (unawaited task cancellation in
+an SSE cleanup path):
+  Drafter  — full edit access, implements the fix, does not commit
+  Reviewer — read-only tools only (no Edit/Write available at all)
+             independently re-reads the live file (doesn't trust the diff
+             handed to it), traces the correctness argument, renders a verdict
+  Orchestrator (human-directed) — decides ship/revise based on the verdict
+```
+
+- **Tool access as an architectural guarantee, not a hoped-for behavior** — the reviewer agent's "don't fix, just critique" constraint wasn't an instruction it could ignore; it had no `Edit`/`Write` tool available in its toolset at all, so bypassing the constraint was structurally impossible, not just discouraged
+- **Verified the verifier** — before trusting the reviewer's verdict, independently pulled the actual `git diff` rather than accepting the drafter's self-reported summary of its own change; the reviewer was separately instructed to re-read the live file itself rather than trust the diff it was handed, catching a real, non-obvious correctness argument (why catching a specific exception at a specific point is safe, tied to an internal invariant of a different function) that the drafter's own report hadn't surfaced
+- **Delegation scoped by actual context need, not applied by default** — used a fully isolated `Explore` subagent (no shared memory with the driving conversation) to investigate a separate, real GitHub issue before fixing it, since that task benefited from a scoped, self-contained brief and a checkable file:line-cited report; used direct execution (no subagent) for smaller, linear fixes afterward, since spawning an agent per small fix would have added context-reload overhead without a matching benefit — the orchestration pattern was chosen per-task, not applied uniformly
+- **Verified an SDK's actual guarantee before stacking a redundant layer on top of it** — before implementing a planned retry-with-backoff mechanism for Anthropic API rate limits, read the installed SDK's source directly and found `AsyncAnthropic` already retries 429s/5xx/timeouts internally with exponential backoff and jitter by default; building the originally-planned retry loop anyway would have shipped two silently-stacked retry layers. Redirected the actual fix to the real gap — a clean failure path once those built-in retries are exhausted, which had no error handling at all
+
+**Why this matters:** the differentiated skill here isn't "can prompt an LLM" — it's treating agent output as a claim to verify rather than a result to trust, matching delegation structure to the actual shape of a task instead of defaulting to either "always delegate" or "never delegate," and using tool-access scoping as a real engineering control rather than a documentation-only convention. This is the same discipline that runs through every other section of this portfolio — verify before trusting — applied one level up, to coordinating agents instead of coordinating code.
 
 ---
 
@@ -451,7 +477,7 @@ This entire project was built using **Claude Code** as an AI-powered development
 | **Hooks** | Automate lifecycle actions (PreToolUse, PostToolUse, SessionStart) |
 | **Skills** | Custom slash commands for project-specific workflows |
 | **Memory system** | Persistent context across sessions — project state, preferences, learning path |
-| **Subagents** | Spawn parallel agents for independent research or code tasks |
+| **Subagents & orchestration** | Spawn isolated agents for independent research or code tasks, and design multi-agent pipelines with real structural constraints (e.g. a read-only reviewer agent) — see section 17 |
 
 ### Why this matters for engineering teams
 

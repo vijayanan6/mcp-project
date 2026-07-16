@@ -65,7 +65,7 @@ The entry point for the web application. Built with FastAPI.
 - Streams Claude's responses back in real time using Server-Sent Events
 - Stores and retrieves conversation history from SQLite
 - Auto-indexes documents into ChromaDB on startup
-- Exposes endpoints: `/`, `/chat`, `/stream`, `/tools`, `/sessions`, `/usage`, `/usage/data`, `/usage/credit`
+- Exposes endpoints: `/`, `/chat`, `/stream`, `/tools`, `/resources`, `/resources/content`, `/prompts`, `/attachment-limits`, `/sessions`, `/usage`, `/usage/data`, `/usage/credit`
 - Routes each message to Haiku or Sonnet via `_pick_model()` based on complexity
 - Accepts one optional image/PDF attachment per turn (`ChatRequest.attachment`) — sent to Claude for that turn only, never persisted (see "Image + PDF Attachments" below)
 - Runs `_run_alert_checks()` after every logged request — pushes Discord mobile alerts (low-balance warning/critical, spend spike, web_search budget, daily digest) when `DISCORD_WEBHOOK_URL` is configured; see `CLAUDE.md` § Discord Mobile Alerts
@@ -185,6 +185,8 @@ Tools aren't the only MCP primitive — `mcp_server.py` also exposes the other t
 
 **Gotcha:** a URI scheme can't contain an underscore (RFC 3986) — `knowledge_base://` fails `pydantic.AnyUrl` validation; `knowledgebase://` (no underscore) is required.
 
+**Wiring gap, found and fixed:** these primitives were fully implemented in `mcp_server.py` but `api.py`'s `lifespan()` only ever called `list_tools()` — never `list_resources()` or `list_prompts()` — so they were completely unreachable through the running app, only testable via a standalone script or MCP Inspector. `api.py` now keeps `mcp_session` on `app.state` and exposes `GET /resources`, `GET /resources/content?uri=...`, `GET /prompts`, and `POST /prompts/{name}` (JSON routes, not additional entries in the tools list Claude sees).
+
 ---
 
 ## The 2 Non-MCP Tools
@@ -209,11 +211,13 @@ Browser: user attaches file → base64-encoded client-side, held in memory only
     a "[User attached a file: name]" marker — the binary never touches the database
 ```
 
-**Ephemeral by design.** The attachment only exists in the local `api_messages` list passed to `tool_runner` for that call. Nothing about the file survives past that one response — a follow-up turn in the same session can't "re-see" it unless the user re-attaches it.
+**Ephemeral by design.** The attachment only exists in the local `api_messages` list passed to `tool_runner` for that call. Nothing about the file survives past that one response — a follow-up turn in the same session can't "re-see" it unless the user re-attaches it. The filename that *does* get persisted (in the `"[User attached a file: name]"` marker) is routed through the same `_sanitize_input()` the message text uses first — it's documented as display-only but still resends to Claude as ordinary text on later turns.
 
-**Citations for PDFs.** PDF attachments enable `citations: {enabled: true}` on the document content block. When Claude's answer draws from a specific page, the response includes an inline `(p.N)` marker, read directly off the citation object's `start_page_number` field. Citations require a PDF with an actual text layer — a purely rasterized/image-based PDF has nothing to cite against.
+**Citations for PDFs.** PDF attachments enable `citations: {enabled: true}` on the document content block. When Claude's answer draws from a specific page, the response includes an inline `(p.N)` marker via a shared `_text_with_citations()` helper (used by both `/chat` and `/stream`), read directly off the citation object's `start_page_number` field. Citations require a PDF with an actual text layer — a purely rasterized/image-based PDF has nothing to cite against.
 
 **Cost.** No separate tracking needed — image/PDF content just becomes extra input tokens, already covered by the existing `usage_log()` pipeline.
+
+**Limits served from the backend.** `GET /attachment-limits` returns the allowed MIME types and size caps; `chat.html` fetches this on load and syncs its JS constants plus the file input's `accept` attribute from it, instead of hardcoding the same three numbers independently in three places.
 
 ---
 
@@ -239,6 +243,8 @@ Here is the step-by-step flow when a user asks a question in the browser:
 16. The browser renders each text chunk as it arrives
 17. When Claude finishes, api.py sends a `done` event containing the model used and a token usage breakdown
 18. api.py saves the updated conversation to SQLite (only if Claude produced a non-empty response)
+
+**If the Anthropic API itself fails** (rate limit, timeout, connection error) at step 7: the SDK's `AsyncAnthropic` client already retries internally with exponential backoff before raising anything. If it still fails after those retries, `/chat` and `/stream` both catch it and return/emit a clean error instead of a raw 500 or a broken stream — see `CLAUDE.md` § API Error Handling.
 
 ---
 
@@ -306,6 +312,11 @@ credit_config table (singleton — always id=1)
   last_alert_sent_at  / last_warning_sent_at    — cooldown timestamps for the two low-balance alert tiers
   last_spike_alert_date / last_digest_sent_date / last_web_search_budget_alert_date — once-per-day cooldown dates for the other 3 Discord alert types
   updated_at          — last saved timestamp
+
+pricing_warnings table
+  model          — model name that hit _PRICING's fallback (primary key)
+  first_seen_at  — when this model was first routed without a pricing entry
+  alert_sent_at  — when the one-time Discord alert fired for this model (NULL = still pending)
 ```
 
 ### ChromaDB (data/chroma_db/)
@@ -349,11 +360,14 @@ Not every question needs the same model. `_pick_model()` in api.py routes each m
 
 ```
 Message arrives
+  ├── has an attachment?        → claude-sonnet-4-6
   ├── len > 120 chars?          → claude-sonnet-4-6
   ├── contains doc keyword?     → claude-sonnet-4-6
   │   (doc, file, search, note, summarize, analyze, report, …)
   └── else                      → claude-haiku-4-5
 ```
+
+The attachment check runs first and unconditionally routes to Sonnet — a user can send an image/PDF with no typed text at all (`chat.html` allows an attachment-only send), producing an empty message string that has no signal about the attached document's actual complexity. Before this was added, that case silently routed to Haiku regardless of what was attached.
 
 Haiku is 10–20× cheaper than Sonnet for short conversational questions. Sonnet is
 used when the query is complex or involves document reasoning. The chosen model is

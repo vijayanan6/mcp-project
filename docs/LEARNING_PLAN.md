@@ -33,7 +33,7 @@ Last updated: July 2026
 
 ### Not Yet Started ❌
 - [ ] pytest — testing framework for MCP tools and FastAPI routes
-- [ ] MCP resources & prompts — the two MCP primitives beyond tools
+- [x] MCP resources & prompts — the two MCP primitives beyond tools
 - [ ] Docker
 - [ ] GCP hands-on deployment
 - [ ] React frontend
@@ -88,11 +88,11 @@ Last updated: July 2026
 ---
 
 ### Error Handling & Resilience
-- [ ] Handle Anthropic API rate limit errors (429) with exponential backoff retry
-- [ ] Handle API timeout errors gracefully — return a user-friendly message, not a 500
+- [x] Handle Anthropic API rate limit errors (429) with exponential backoff retry — `AsyncAnthropic`'s default `max_retries=2` already does this internally (verified via SDK source, not assumed); no hand-rolled retry loop needed
+- [x] Handle API timeout errors gracefully — return a user-friendly message, not a 500 — `/chat` and `/stream` both catch `anthropic.APIError` and return/emit a clean message instead of a raw traceback
 - [ ] Handle MCP server crashes — detect and restart automatically
 - [ ] Add fallback behaviour when `search_docs` returns no results
-- [ ] Never let an unhandled exception reach the user — always return a clean error SSE event
+- [x] Never let an unhandled exception reach the user — always return a clean error SSE event — `/stream` already caught broadly; `/chat` previously had no error handling at all, now fixed
 - [ ] Understand circuit breaker pattern — stop calling a failing service temporarily
 
 **Success check:** App handles API rate limits, timeouts, and MCP crashes without crashing or showing raw tracebacks to the user
@@ -159,6 +159,8 @@ Last updated: July 2026
 - [x] Test resources and prompts via MCP Inspector (plus a direct MCP client script, since Inspector's browser proxy auth blocked automated verification)
 
 **Result: all three MCP primitives now live in `mcp_server.py` — 8 tools, 2 resource kinds, 1 prompt — verified end-to-end**
+
+**Correction, found by a later `/code-review`:** "verified end-to-end" above was true only for the standalone `mcp.ClientSession` script and Inspector — `api.py`'s `lifespan()` never actually called `list_resources()`/`list_prompts()`, so resources/prompts were completely unreachable through the running app. Fixed by keeping `mcp_session` on `app.state` and adding `GET /resources`, `GET /resources/content`, `GET /prompts`, `POST /prompts/{name}`; re-verified against the actually-running server this time.
 
 ---
 

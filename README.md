@@ -100,7 +100,7 @@ Three different execution models, one `tools` list:
 - **Resources** — read-only, URI-addressable data: `knowledgebase://files` (the file listing, as a resource instead of a tool call) and `note://<title>`, one per saved note.
 - **Prompts** — reusable request templates: `summarize_document` takes a `filename` and returns a pre-built request that drives the existing `read_doc`/`search_docs` tools.
 
-See `CLAUDE.md` § MCP Resources & Prompts for the full design, including a real gotcha (URI schemes can't contain underscores — RFC 3986) caught via testing.
+Reachable through the running app, not just a standalone test script — `GET /resources`, `GET /resources/content`, `GET /prompts`, `POST /prompts/{name}`. See `CLAUDE.md` § MCP Resources & Prompts for the full design, including a real gotcha (URI schemes can't contain underscores — RFC 3986) caught via testing, and a real wiring gap (found via `/code-review`, fixed) where these worked in isolated tests while being unreachable in production.
 
 ---
 
@@ -117,6 +117,9 @@ pre-indexed `knowledge_base/` corpus used by `search_docs`.
   the response includes an inline `(p.N)` page reference.
 - **No new cost tracking needed** — image/PDF tokens bill as ordinary input tokens, already
   captured by the existing cost dashboard.
+- **Limits served from the backend** — `GET /attachment-limits` is the single source of truth
+  for allowed file types and size caps; the frontend fetches it on load instead of hardcoding
+  a second copy that could drift out of sync.
 
 See `CLAUDE.md` § Image + PDF Attachments for the full design (validation, size caps, the
 ephemeral-history mechanism).
@@ -185,8 +188,9 @@ handling — see `CLAUDE.md` for how.
 **Mobile alerts:** set `DISCORD_WEBHOOK_URL` in `.env` to get real-time Discord push
 notifications (via Discord's mobile app) instead of only the passive in-browser badge —
 covers low-balance warnings (2 tiers), a spend-spike alert, a per-tool budget alert for
-`web_search`, and a daily usage digest (spend/tokens/top-tools recap plus available credit
-remaining). Fully optional; every check no-ops if unset. See
+`web_search`, a daily usage digest (spend/tokens/top-tools recap plus available credit
+remaining), and a one-time missing-pricing-data alert if a model gets routed without a
+`_PRICING` entry. Fully optional; every check no-ops if unset. See
 `CLAUDE.md` § Discord Mobile Alerts for the full trigger/cooldown design.
 
 This dashboard tracks **Anthropic API usage only** — not your Claude Pro subscription (a separate,
