@@ -165,6 +165,18 @@ async def list_tools():
     return {"tools": app.state.tool_names}
 
 
+@app.get("/attachment-limits")
+async def attachment_limits():
+    """Serve the attachment allowlist/size caps so chat.html reads them from the
+    backend at load time instead of hardcoding a second copy that can drift out
+    of sync with _ATTACHMENT_ALLOWED_TYPES / the *_ATTACHMENT_BYTES constants."""
+    return {
+        "allowed_types": sorted(_ATTACHMENT_ALLOWED_TYPES),
+        "max_image_bytes": _MAX_IMAGE_ATTACHMENT_BYTES,
+        "max_pdf_bytes": _MAX_PDF_ATTACHMENT_BYTES,
+    }
+
+
 @app.get("/resources")
 async def list_mcp_resources():
     """Return available MCP resources (knowledge base listing + one per saved note)."""

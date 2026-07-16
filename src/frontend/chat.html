@@ -229,9 +229,13 @@
   const sendBtn    = document.getElementById("send");
 
   // ── Attachments (image/PDF) ─────────────────────────────────────────────
-  const ATTACHMENT_ALLOWED_TYPES = ["image/jpeg","image/png","image/gif","image/webp","application/pdf"];
-  const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
-  const MAX_PDF_BYTES   = 10 * 1024 * 1024;
+  // Defaults match the backend's current values so the UI works correctly even
+  // before /attachment-limits resolves; the fetch below is the real source of
+  // truth going forward so a backend cap change can't silently drift out of
+  // sync with what the browser enforces (see GitHub issue #11).
+  let ATTACHMENT_ALLOWED_TYPES = ["image/jpeg","image/png","image/gif","image/webp","application/pdf"];
+  let MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+  let MAX_PDF_BYTES   = 10 * 1024 * 1024;
   let pendingAttachment = null;   // { media_type, data, filename } | null
 
   const fileInputEl   = document.getElementById("file-input");
@@ -290,6 +294,16 @@
     .then(r => r.json())
     .then(data => {
       document.getElementById("tools-badge").textContent = data.tools.join("  •  ");
+    });
+
+  // ── Load attachment limits (single source of truth: the backend) ──────────
+  fetch("/attachment-limits")
+    .then(r => r.json())
+    .then(data => {
+      ATTACHMENT_ALLOWED_TYPES = data.allowed_types;
+      MAX_IMAGE_BYTES = data.max_image_bytes;
+      MAX_PDF_BYTES = data.max_pdf_bytes;
+      fileInputEl.accept = data.allowed_types.join(",");
     });
 
   // Show welcome message
