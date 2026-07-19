@@ -10,3 +10,8 @@ sentence-transformers>=2.7.0
 python-dotenv>=1.0.0
 httpx>=0.27.0
 langfuse>=4.14.0
+
+# Optional, not installed by default — only needed if SPENDGAUGEAI_URL/SPENDGAUGEAI_API_KEY
+# are set in .env (see README.md "Optional: SpendGaugeAI reporting"). The app runs fine
+# without it; api.py handles ImportError and disables the feature cleanly.
+# spendgaugeai

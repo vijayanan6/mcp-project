@@ -73,6 +73,48 @@ from langfuse import Langfuse
 LANGFUSE_ENABLED = bool(os.environ.get("LANGFUSE_PUBLIC_KEY") and os.environ.get("LANGFUSE_SECRET_KEY"))
 langfuse_client = Langfuse() if LANGFUSE_ENABLED else None
 
+# Second, independent usage-reporting path to a SpendGaugeAI instance — same
+# optional-feature pattern as Langfuse above. Gated on both env vars *and* the
+# `spendgaugeai` package actually being installed (it's not a hard dependency
+# in requirements.txt, since this integration is opt-in): either being absent
+# just means the feature no-ops, never an import-time crash. This project's
+# own local usage_log()/`/usage` dashboard are completely unaffected either
+# way — see docs/DESIGN.md §10 in the SpendGaugeAI repo for the design.
+SPENDGAUGEAI_URL = os.environ.get("SPENDGAUGEAI_URL")
+SPENDGAUGEAI_API_KEY = os.environ.get("SPENDGAUGEAI_API_KEY")
+SPENDGAUGEAI_ENABLED = bool(SPENDGAUGEAI_URL and SPENDGAUGEAI_API_KEY)
+spendgauge_client = None
+if SPENDGAUGEAI_ENABLED:
+    try:
+        from spendgaugeai import SpendGaugeAIClient
+        spendgauge_client = SpendGaugeAIClient(base_url=SPENDGAUGEAI_URL, api_key=SPENDGAUGEAI_API_KEY, project="mcp-project")
+    except ImportError:
+        logging.getLogger(__name__).warning(
+            "[spendgaugeai] SPENDGAUGEAI_URL/SPENDGAUGEAI_API_KEY are set but the `spendgaugeai` "
+            "package isn't installed (pip install spendgaugeai) — reporting disabled."
+        )
+        SPENDGAUGEAI_ENABLED = False
+
+
+async def _spendgauge_report(session_id, model, input_tokens, cache_write, cache_read, output_tokens, tools, web_search_requests) -> None:
+    """Best-effort report to the second, independent SpendGaugeAI instance.
+    Never lets a SpendGaugeAI failure break the actual chat response — same
+    isolation principle _lf_finish() applies to Langfuse. (SpendGaugeAIClient
+    itself already fails silently on its own; this wrapper matches the
+    explicit call-site isolation convention every other optional integration
+    in this file uses, rather than relying on that alone.)"""
+    if not SPENDGAUGEAI_ENABLED:
+        return
+    try:
+        await spendgauge_client.alog(
+            model=model, session_id=session_id, tools_used=tools,
+            input_tokens=input_tokens, cache_write_tokens=cache_write,
+            cache_read_tokens=cache_read, output_tokens=output_tokens,
+            web_search_requests=web_search_requests,
+        )
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"[spendgaugeai] report failed: {e}")
+
 
 def _lf_finish(generation, **update_kwargs) -> None:
     """End a Langfuse generation span, if tracing is enabled. Never lets a
@@ -1012,6 +1054,7 @@ async def chat(req: ChatRequest):
     if has_usage:
         usage_log(session_id, model, total_input, total_cache_write, total_cache_read, total_output, tools=tools_used, project="mcp-project", web_search_requests=total_web_searches)
         await _run_alert_checks()
+        await _spendgauge_report(session_id, model, total_input, total_cache_write, total_cache_read, total_output, tools_used, total_web_searches)
 
     latency_ms = _log_latency("/chat", _start_time, session_id=session_id, model=model, outcome="ok")
     _lf_finish(
@@ -1136,6 +1179,7 @@ async def stream_chat(req: ChatRequest):
             if has_usage:
                 usage_log(session_id, model, total_input, total_cache_write, total_cache_read, total_output, tools=tools_called, project="mcp-project", web_search_requests=total_web_searches)
                 await _run_alert_checks()
+                await _spendgauge_report(session_id, model, total_input, total_cache_write, total_cache_read, total_output, tools_called, total_web_searches)
 
             latency_ms = _log_latency("/stream", _start_time, session_id=session_id, model=model, outcome="ok")
             _lf_finish(

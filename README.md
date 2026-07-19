@@ -220,6 +220,13 @@ every Claude API call, viewable in Langfuse's own dashboard. Fully optional — 
 no-ops cleanly if unset, same pattern as the Discord webhook. See `CLAUDE.md` § Logging & Tracing
 for the full design.
 
+**Optional: SpendGaugeAI reporting.** Set `SPENDGAUGEAI_URL` and `SPENDGAUGEAI_API_KEY` in `.env`
+and `pip install spendgaugeai` to additionally report every request's usage to a running
+[SpendGaugeAI](https://github.com/vijayanan6/SpendGaugeAI) instance — this project's own
+extraction, dogfooding its budget-control dashboard. Fully optional and additive: this project's
+local `/usage` dashboard keeps working completely unchanged either way. See `CLAUDE.md` § Logging
+& Tracing for the full design.
+
 ---
 
 ## Model Routing & Prompt Caching
