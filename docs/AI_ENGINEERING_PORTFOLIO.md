@@ -19,6 +19,7 @@ A full-stack AI application built entirely from first principles — no LangChai
 - **Directs multi-agent workflows, not just single-turn prompts** — designs and runs agent pipelines with deliberate structural constraints (e.g. a code-review "reviewer" agent given read-only tools so it's architecturally incapable of silently fixing instead of critiquing), not just sequential chat turns. See section 17.
 - **Resilience engineering with the reasoning made explicit, not just the code** — found a real async bug (task-bound cancel scopes corrupting a reconnect) by killing a live process, not by reading code; then made the deliberate, documented call *not* to build the architecturally "correct" fix once it was clear the app's actual failure rate didn't justify it. Same discipline caught a live cost-dashboard bug (a shared cost double-counted across a flattened one-to-many relationship) that looked completely trustworthy until one specific number got questioned, and a production bug that reached a real user (an `UnboundLocalError` crashing every streaming request) root-caused to a whole-function Python scoping rule and fixed the same day. See section 18.
 - **Integrated third-party LLM observability (Langfuse) the same way as everything else here — verified, not assumed** — checked the SDK's *current* API via its docs before writing integration code (it had gone through a major version rework most existing tutorials don't reflect), investigated a real pip dependency conflict the install triggered instead of ignoring the warning, and proved genuine trace delivery by fetching a trace back from Langfuse's own servers rather than trusting that no local exception meant success. See section 20.
+- **Extracted a feature into a real, standalone, publishable product, not a code copy-paste** — [SpendGaugeAI](https://github.com/vijayanan6/SpendGaugeAI), its own GitHub repo with official Python and TypeScript client SDKs. Verified the actual install experience as a stranger would rather than trusting the packaging config, catching two real bugs that way; root-caused a machine-level TLS interception issue across three unrelated tools (a Python HTTP client, `curl`, `pip`) to one consistent fix instead of three separate patches; and caught a real security regression in my own first-pass fix — an insecure default that would have shipped to every future user — and reversed it before committing. See section 21.
 
 ---
 
@@ -177,6 +178,12 @@ async def list_resources() -> list[types.Resource]:
 ---
 
 ### 6. AI Cost Dashboard & Credit Tracking
+
+> This feature was later extracted into [SpendGaugeAI](https://github.com/vijayanan6/SpendGaugeAI),
+> a standalone, publishable product — this project's own dashboard was retired 2026-07-19 in
+> favor of it. See section 21 for the extraction itself and the production debugging that came
+> with running it for real. The work below is kept as-is: it's what got built, and demonstrating
+> it evolved into its own product is the point, not something to erase from the record.
 
 Built a full observability layer for LLM API spend — the same class of tooling used in enterprise AI platforms to control costs.
 
@@ -532,6 +539,27 @@ _file_handler = logging.handlers.TimedRotatingFileHandler(_LOG_FILE, when="midni
 - **Responded to "this UI is confusing" by finding the one real gap, not by defending the tool** — told a third-party dashboard was harder to read than this project's own purpose-built ones, identified the single thing it showed that the custom dashboards didn't (actual conversation content vs. metadata-only), and closed exactly that gap in the tool already found clear. First design for the fix (duplicating message content onto the cost-tracking table) was reconsidered and reverted before writing any code, once it was clear it would create two copies of the same data with real drift risk — replaced with a design that reads the existing session-history table directly, adding zero new storage
 
 **Why this matters:** the pattern across every bullet here is the same one that runs through this whole portfolio, applied to a new domain — observability tooling instead of application code. Verify a claim (the SDK's shape, the dependency conflict's real impact, the trace's actual delivery) before building on top of it, and when feedback says something isn't working, diagnose the specific gap rather than either ignoring the feedback or rebuilding everything from scratch.
+
+---
+
+### 21. From Feature to Product — Extracting SpendGaugeAI, and Production Debugging on Someone Else's Infrastructure
+
+Took the cost dashboard from section 6 and rebuilt it as [SpendGaugeAI](https://github.com/vijayanan6/SpendGaugeAI) — a standalone, self-hosted, publishable product (own GitHub repo, MIT license, official Python and TypeScript SDKs), not a code copy-paste. This project now reports to it over HTTP the same way any other Claude API app could.
+
+**API and SDK design, not just a port:**
+- Redesigned the integration contract from "shared SQLite file" to a real HTTP API (`POST /usage/log`), so any language can report usage, not just Python apps sharing a filesystem
+- Built two official client SDKs (Python, TypeScript), each offering an auto-instrumenting `wrap()` (patches the Anthropic client's `messages.create`/`.stream` in place, so every existing call site in a consuming app starts reporting with zero further code changes) and a manual `.log()` for finer control
+- `wrap()`'s correctness required getting four separate edge cases right: covering both sync and async clients, reporting from the final accumulated message on streaming calls (not per-chunk), scoping `session_id` via a context-local variable rather than a mutable client attribute (so a shared client under concurrent requests can't leak one request's session into another's), and pulling `tools_used`/`web_search_requests` from two different response fields, not one
+
+**Found and fixed real packaging bugs by actually installing the product as a stranger would, not by reading the config:**
+- `docker compose build` failed outright — a wheel-packaging config duplicated file paths already covered elsewhere, an error real `pip install -e .` editable installs never surface because they skip that codepath entirely
+- `pip install git+https://github.com/...` — the actual one-command install path documented for new users — was completely broken: a build asset was gitignored as a "pure build artifact," so a fresh clone from GitHub never had it and the build errored. Found only by reproducing the exact command a stranger would run, in a genuinely isolated environment, not by re-reading the packaging config
+
+**Root-caused a machine-level TLS interception issue across three unrelated tools, not three separate one-off patches.** Discord alert delivery failed with `CERTIFICATE_VERIFY_FAILED`. Ruled out a stale CA bundle methodically — checked the container's cert store (current), tried the system bundle explicitly instead of the Python `certifi` default (also failed) — before finding the real tell: the identical failure reproduced on the host machine too, with a different HTTP client, completely outside any container. That proved it was a corporate certificate chain / network-monitoring driver intercepting TLS at the machine level, not anything specific to one tool. The same root cause then surfaced twice more, in `curl` and in `pip` itself, once a `--no-cache` rebuild forced those code paths to actually execute instead of hitting a cached layer. Fixed once, consistently, not three times: one opt-in environment-variable pattern threaded through all three (Python's `httpx`, `curl`, `pip --trusted-host`), defaulting to full certificate verification.
+
+**Caught a security regression in my own first-pass fix before it shipped, not after.** The obvious fix — disable TLS verification outright — was already a documented, accepted pattern in this very project's own codebase. But this project is a personal tool running on one machine; SpendGaugeAI is a published product other people install. Copying that pattern unconditionally would have silently shipped disabled certificate verification to every future SpendGaugeAI user's Discord webhook calls, not just fixed this machine. Reversed it before committing: made it an explicit opt-in environment variable, off (secure) by default, then verified the corrected version still solved the actual problem on this machine.
+
+**Why this matters:** the same verification discipline that runs through this whole portfolio — checking a live dependency's actual behavior instead of trusting an assumption — applies just as much to infrastructure and packaging as it does to application code. A wheel build passing locally, a Docker `--build` flag reportedly run, an obvious-looking security fix — none of them were trusted until independently re-verified, and two of those three turned out to be wrong the first time.
 
 ---
 
