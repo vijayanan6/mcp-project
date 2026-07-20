@@ -99,31 +99,6 @@
       cursor: pointer;
     }
     #new-session:hover { background: rgba(255,255,255,0.1); }
-    #cost-link {
-      background: transparent;
-      border: 1px solid rgba(52,211,153,0.4);
-      color: #34d399;
-      border-radius: 6px;
-      padding: 4px 12px;
-      font-size: 0.75rem;
-      cursor: pointer;
-      text-decoration: none;
-      display: inline-flex;
-      align-items: center;
-      gap: 5px;
-    }
-    #cost-link:hover { background: rgba(52,211,153,0.1); }
-    #credit-alert {
-      background: #ef4444;
-      color: #fff;
-      border-radius: 6px;
-      padding: 4px 12px;
-      font-size: 0.75rem;
-      font-weight: 700;
-      display: none;
-      animation: pulse 1.8s infinite;
-    }
-    @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:0.6; } }
 
     /* ── Footer / input ── */
     footer {
@@ -200,8 +175,6 @@
   <h1>⚡ MCP Learning Agent</h1>
   <div style="display:flex;gap:10px;align-items:center">
     <span id="tools-badge">Loading tools…</span>
-    <span id="credit-alert">⚠ Low Credits</span>
-    <a id="cost-link" href="/usage" target="_blank">Cost Dashboard</a>
     <a id="logs-link" href="/logs" target="_blank">Logs</a>
     <button id="new-session" onclick="newSession()">New chat</button>
   </div>
@@ -448,29 +421,6 @@
   inputEl.addEventListener("keydown", e => {
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
   });
-
-  // Credit alert check — runs on load and every 60s
-  async function checkCredit() {
-    try {
-      const data = await fetch("/usage/data").then(r => r.json());
-      const credit = data.credit || {};
-      const totals = data.totals || {};
-      const bal = credit.starting_balance || 0;
-      if (bal <= 0) return; // not configured
-      const spent = totals.total_cost_usd || 0;
-      const remaining = Math.max(bal - spent, 0);
-      const threshold = credit.alert_threshold || 1.0;
-      const alertEl = document.getElementById("credit-alert");
-      if (remaining <= threshold) {
-        alertEl.textContent = `⚠ Low Credits ($${remaining.toFixed(2)} left)`;
-        alertEl.style.display = "inline-block";
-      } else {
-        alertEl.style.display = "none";
-      }
-    } catch {}
-  }
-  checkCredit();
-  setInterval(checkCredit, 60000);
 </script>
 </body>
 </html>

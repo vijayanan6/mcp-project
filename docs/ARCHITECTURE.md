@@ -65,11 +65,10 @@ The entry point for the web application. Built with FastAPI.
 - Streams Claude's responses back in real time using Server-Sent Events
 - Stores and retrieves conversation history from SQLite
 - Auto-indexes documents into ChromaDB on startup
-- Exposes endpoints: `/`, `/chat`, `/stream`, `/tools`, `/resources`, `/resources/content`, `/prompts`, `/attachment-limits`, `/sessions`, `/usage`, `/usage/data`, `/usage/credit`, `/logs`, `/logs/data`, `/logs/conversations`
+- Exposes endpoints: `/`, `/chat`, `/stream`, `/tools`, `/resources`, `/resources/content`, `/prompts`, `/attachment-limits`, `/sessions`, `/logs`, `/logs/data`, `/logs/conversations`
 - Routes each message to Haiku or Sonnet via `_pick_model()` based on complexity
 - Accepts one optional image/PDF attachment per turn (`ChatRequest.attachment`) — sent to Claude for that turn only, never persisted (see "Image + PDF Attachments" below)
-- Runs `_run_alert_checks()` after every logged request — pushes Discord mobile alerts (low-balance warning/critical, spend spike, web_search budget, daily digest) when `DISCORD_WEBHOOK_URL` is configured; see `CLAUDE.md` § Discord Mobile Alerts
-- Logs token usage and tool calls to SQLite after every response via `usage_log()`
+- Reports token usage and tool calls to a [SpendGaugeAI](https://github.com/vijayanan6/SpendGaugeAI) instance after every response via `_spendgauge_report()`, if configured — see `CLAUDE.md` § Logging & Tracing (this project's own local usage dashboard and Discord alerts were removed 2026-07-19 in favor of it)
 - Structured logging via Python's `logging` module (console + rotating `data/app.log`), request latency tracking at every exit point of `/chat`/`/stream`, and optional Langfuse tracing of every Claude API call — see "Logging & Tracing" below
 
 ### mcp_server.py — MCP Server
@@ -86,10 +85,10 @@ Handles all database operations. Four tables:
 
 - **notes** — stores user-saved notes permanently (title, content, timestamp)
 - **sessions** — stores full chat history per session as a JSON array
-- **usage_logs** — stores token counts, model, estimated cost, tools called, and project name per request
-- **credit_config** — singleton row (id=1) storing starting API balance and alert threshold
+- **usage_logs** — token counts, model, estimated cost, tools called, project name per request. Unused since 2026-07-19 (nothing in `api.py` calls `usage_log()` anymore — usage reporting moved to SpendGaugeAI), kept for historical data rather than deleted along with the code that wrote it.
+- **credit_config** — singleton row (id=1) storing starting API balance and alert threshold. Same status: unused, kept as-is.
 
-Data survives restarts. `usage_log()` accepts a `project` parameter so multiple projects can share one database (multi-tenancy at the data layer).
+Data survives restarts.
 
 ### rag.py — Semantic Search
 Handles document indexing and retrieval using ChromaDB.
@@ -120,27 +119,14 @@ A single-page chat interface built with vanilla JavaScript.
 - Shows tool call indicators (e.g. `→ search_docs`) as Claude uses tools
 - Persists session ID in browser localStorage across page reloads
 - Shows token breakdown and model used after every response
-- Low-credit alert badge pulses red in header when API balance is low
 - 📎 button attaches one image or PDF per message (file picker only — no drag-drop/paste yet), with a removable filename chip before sending
-
-### usage.html — AI Cost Dashboard
-Visual observability dashboard at `/usage`.
-
-- Summary cards: total requests, cost, cache savings, cache hit rate, input/output tokens
-- Token breakdown bar chart (input / cache_write / cache_read / output)
-- Haiku vs Sonnet donut chart with cost split
-- Daily SVG bar chart — 14-day rolling window, Y-axis scale, dollar labels, trend line
-- Cost by Tool table — calls, total cost, avg cost per MCP tool
-- Cost by Project table — multi-project breakdown with filter dropdown
-- Claude API Credit Tracker — starting balance, progress bar, burn rate, days remaining
-- Cost Forecast — 30/60/90 day projected spend based on current burn rate
 
 ### logs.html — Error & Log Viewer
 Dashboard at `/logs`, two tabs.
 
 - **Logs tab** — click-to-filter summary cards (All/Error/Warning/Info) backed by `GET /logs/data`, which parses `data/app.log` into structured entries; errors have an expandable "Show traceback" toggle
 - **Conversations tab** — backed by `GET /logs/conversations`, reads directly from the `sessions` table (no separate storage) and renders each session as an expandable chat-transcript card, user/assistant bubbles, most recent open by default. Added specifically because Langfuse's own dashboard UI was found confusing compared to this project's purpose-built ones — this closes the one real gap (seeing actual conversation content, not just cost/token metadata) without needing to open a third-party UI at all
-- Same tab-visibility-aware polling as `usage.html`
+- Tab-visibility-aware polling
 
 ### convert_pdfs.py — PDF Converter
 Standalone script for converting scanned PDFs to readable text.
@@ -225,7 +211,7 @@ Browser: user attaches file → base64-encoded client-side, held in memory only
 
 **Citations for PDFs.** PDF attachments enable `citations: {enabled: true}` on the document content block. When Claude's answer draws from a specific page, the response includes an inline `(p.N)` marker via a shared `_text_with_citations()` helper (used by both `/chat` and `/stream`), read directly off the citation object's `start_page_number` field. Citations require a PDF with an actual text layer — a purely rasterized/image-based PDF has nothing to cite against.
 
-**Cost.** No separate tracking needed — image/PDF content just becomes extra input tokens, already covered by the existing `usage_log()` pipeline.
+**Cost.** No separate tracking needed — image/PDF content just becomes extra input tokens, reported the same as every other request's tokens.
 
 **Limits served from the backend.** `GET /attachment-limits` returns the allowed MIME types and size caps; `chat.html` fetches this on load and syncs its JS constants plus the file input's `accept` attribute from it, instead of hardcoding the same three numbers independently in three places.
 
@@ -491,7 +477,7 @@ relative to `input` means prompt caching is working correctly.
 | PDF (text) | pypdf | Lightweight PDF text extraction |
 | PDF (scanned) | pymupdf + Tesseract | Render pages → OCR → text |
 | Version Control | Git + GitHub | Code history and backup |
-| UI Testing | Playwright MCP | Drives chat.html/usage.html/logs.html in a real browser via Claude Code |
+| UI Testing | Playwright MCP | Drives chat.html/logs.html in a real browser via Claude Code |
 | LLM Tracing | Langfuse (optional) | End-to-end tracing of every Claude API call, free tier |
 | Language | Python 3.12 | Everything |
 
@@ -511,8 +497,7 @@ MCP Project/
 │   │   ├── database.py         SQLite helpers — notes and sessions CRUD
 │   │   └── rag.py              ChromaDB helpers — chunk, embed, index, search
 │   └── frontend/
-│       ├── chat.html       Browser chat UI — SSE streaming, session storage, credit alert badge
-│       ├── usage.html      AI Cost Dashboard — token breakdown, credit tracker, tool costs, project filter
+│       ├── chat.html       Browser chat UI — SSE streaming, session storage
 │       └── logs.html       Error/Log Viewer — filterable log entries + a Conversations tab
 │
 ├── scripts/

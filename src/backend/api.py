@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-FastAPI Web Server — MCP Learning Project
+FastAPI Web Server â€” MCP Learning Project
 
 Replaces the CLI (agent.py) with a proper web API + streaming chat UI.
 
@@ -10,7 +10,7 @@ Key FastAPI concepts used here:
   - StreamingResponse: Server-Sent Events for real-time streaming
   - app.state: share objects (tools, client) across all requests
 
-Run (from the project root — --app-dir puts src/backend/ on sys.path so this
+Run (from the project root â€” --app-dir puts src/backend/ on sys.path so this
 file's plain `from database import ...`-style internal imports keep resolving):
   uvicorn api:app --reload --port 8000 --app-dir src/backend
   Then open http://localhost:8000
@@ -33,9 +33,9 @@ from dotenv import load_dotenv
 
 ENVIRONMENT = os.environ.get("ENVIRONMENT", "development")
 
-# "development" (the default) keeps today's exact behavior — load_dotenv()
+# "development" (the default) keeps today's exact behavior â€” load_dotenv()
 # with no args, finding the existing plain .env this project has always used
-# — so nothing breaks for the current single-environment setup. Only an
+# â€” so nothing breaks for the current single-environment setup. Only an
 # explicitly different ENVIRONMENT switches to a same-named .env.<environment>
 # file, and falls back to the plain .env if that file doesn't exist yet
 # (e.g. ENVIRONMENT=production set but no .env.production created), rather
@@ -59,27 +59,24 @@ from mcp.client.stdio import StdioServerParameters, stdio_client
 from mcp.shared.exceptions import McpError
 from database import (
     init_db, session_get, session_save, session_list, session_delete,
-    usage_log, usage_summary, credit_status, credit_set,
-    mark_alert_sent, clear_alert_cooldown, mark_warning_sent, clear_warning_cooldown,
-    mark_spike_alert_sent, mark_digest_sent, mark_web_search_budget_alert_sent,
-    total_cost_for_date, web_search_cost_for_date, trailing_daily_average, daily_digest,
-    pricing_warnings_pending, mark_pricing_warning_sent,
 )
 from text_editor_tool import ProjectNotesEditorTool
 from langfuse import Langfuse
 
-# Same optional-feature pattern as DISCORD_WEBHOOK_URL below: fully optional,
-# every call site checks for None and no-ops if tracing isn't configured.
+# Same optional-feature pattern as the SpendGaugeAI reporting path below:
+# fully optional, every call site checks for None and no-ops if tracing
+# isn't configured.
 LANGFUSE_ENABLED = bool(os.environ.get("LANGFUSE_PUBLIC_KEY") and os.environ.get("LANGFUSE_SECRET_KEY"))
 langfuse_client = Langfuse() if LANGFUSE_ENABLED else None
 
-# Second, independent usage-reporting path to a SpendGaugeAI instance — same
-# optional-feature pattern as Langfuse above. Gated on both env vars *and* the
-# `spendgaugeai` package actually being installed (it's not a hard dependency
-# in requirements.txt, since this integration is opt-in): either being absent
+# Usage-reporting path to a SpendGaugeAI instance â€” same optional-feature
+# pattern as Langfuse above. Gated on both env vars *and* the `spendgaugeai`
+# package actually being installed (it's not a hard dependency in
+# requirements.txt, since this integration is opt-in): either being absent
 # just means the feature no-ops, never an import-time crash. This project's
-# own local usage_log()/`/usage` dashboard are completely unaffected either
-# way — see docs/DESIGN.md §10 in the SpendGaugeAI repo for the design.
+# own local usage_log()/`/usage` dashboard were removed 2026-07-19 in favor of
+# SpendGaugeAI, which is now the only place usage/cost/alerts are surfaced â€”
+# see docs/DESIGN.md Â§10 in the SpendGaugeAI repo for the original design.
 SPENDGAUGEAI_URL = os.environ.get("SPENDGAUGEAI_URL")
 SPENDGAUGEAI_API_KEY = os.environ.get("SPENDGAUGEAI_API_KEY")
 SPENDGAUGEAI_ENABLED = bool(SPENDGAUGEAI_URL and SPENDGAUGEAI_API_KEY)
@@ -91,14 +88,14 @@ if SPENDGAUGEAI_ENABLED:
     except ImportError:
         logging.getLogger(__name__).warning(
             "[spendgaugeai] SPENDGAUGEAI_URL/SPENDGAUGEAI_API_KEY are set but the `spendgaugeai` "
-            "package isn't installed (pip install spendgaugeai) — reporting disabled."
+            "package isn't installed (pip install spendgaugeai) â€” reporting disabled."
         )
         SPENDGAUGEAI_ENABLED = False
 
 
 async def _spendgauge_report(session_id, model, input_tokens, cache_write, cache_read, output_tokens, tools, web_search_requests) -> None:
     """Best-effort report to the second, independent SpendGaugeAI instance.
-    Never lets a SpendGaugeAI failure break the actual chat response — same
+    Never lets a SpendGaugeAI failure break the actual chat response â€” same
     isolation principle _lf_finish() applies to Langfuse. (SpendGaugeAIClient
     itself already fails silently on its own; this wrapper matches the
     explicit call-site isolation convention every other optional integration
@@ -118,8 +115,8 @@ async def _spendgauge_report(session_id, model, input_tokens, cache_write, cache
 
 def _lf_finish(generation, **update_kwargs) -> None:
     """End a Langfuse generation span, if tracing is enabled. Never lets a
-    Langfuse SDK failure break the actual chat response — same isolation
-    principle as _run_alert_checks() applies to a third-party integration."""
+    Langfuse SDK failure break the actual chat response â€” same isolation
+    principle as _spendgauge_report() applies to a third-party integration."""
     if generation is None:
         return
     try:
@@ -129,21 +126,15 @@ def _lf_finish(generation, **update_kwargs) -> None:
         logger.warning(f"[langfuse] Failed to finish generation span: {e}")
 
 
-DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL")
-ALERT_COOLDOWN = timedelta(hours=24)          # low-balance tiers: min gap between repeat alerts
-WEB_SEARCH_DAILY_BUDGET = 1.00                 # per-tool budget alert threshold
-SPIKE_MULTIPLIER = 3.0                         # today's spend vs trailing average
-SPIKE_MIN_ABSOLUTE = 1.00                      # floor so a near-zero average can't trigger noise
-
 SERVER_SCRIPT = str(Path(__file__).parent / "mcp_server.py")
 
 
-# ── Logging ──────────────────────────────────────────────────────────────────
+# â”€â”€ Logging â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 # Structured logging via Python's logging module, replacing bare print(). Two
-# handlers: console (level scales with ENVIRONMENT — verbose in development,
+# handlers: console (level scales with ENVIRONMENT â€” verbose in development,
 # quieter in anything else) and a file that always captures INFO+ regardless
-# of environment, so a full operational record — including every error with
-# its real traceback — exists on disk, not just in whatever terminal happened
+# of environment, so a full operational record â€” including every error with
+# its real traceback â€” exists on disk, not just in whatever terminal happened
 # to be open when something went wrong.
 _LOG_DIR = Path(__file__).parent.parent.parent / "data"
 _LOG_DIR.mkdir(parents=True, exist_ok=True)
@@ -164,7 +155,7 @@ _console_handler.setFormatter(_log_formatter)
 logger.addHandler(_console_handler)
 
 # Rotates at midnight, keeps 14 days of history (app.log.2026-07-16, etc.),
-# then deletes anything older automatically — a personal local tool has no
+# then deletes anything older automatically â€” a personal local tool has no
 # use for logs going back further than that, and unbounded growth was the
 # one real gap in the plain FileHandler this replaces.
 _file_handler = logging.handlers.TimedRotatingFileHandler(
@@ -177,8 +168,8 @@ logger.addHandler(_file_handler)
 
 def _log_latency(route: str, start_time: float, **fields) -> float:
     """Log how long a request took, in ms, plus any extra context (session_id,
-    model, outcome). Called at every exit point of /chat and /stream — success
-    and failure alike — since latency on a *failing* request is exactly as
+    model, outcome). Called at every exit point of /chat and /stream â€” success
+    and failure alike â€” since latency on a *failing* request is exactly as
     useful to know as latency on a succeeding one. Returns the elapsed ms so
     callers can also surface it in a response body if useful."""
     elapsed_ms = (time.perf_counter() - start_time) * 1000
@@ -187,7 +178,7 @@ def _log_latency(route: str, start_time: float, **fields) -> float:
     return elapsed_ms
 
 
-# Matches "2026-07-16 15:48:58 [development] ERROR    message text" — the
+# Matches "2026-07-16 15:48:58 [development] ERROR    message text" â€” the
 # start of a genuine log entry. Any line that doesn't match (a traceback
 # continuation line, which logging appends raw with no prefix of its own) is
 # folded into the traceback of whichever entry came before it.
@@ -218,13 +209,13 @@ def _parse_log_file(path: Path) -> list[dict]:
     return entries
 
 
-# ── MCP connection: startup and crash recovery share this ────────────────────
+# â”€â”€ MCP connection: startup and crash recovery share this â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-# Anthropic server-side tool — runs on Anthropic's infrastructure, no MCP
+# Anthropic server-side tool â€” runs on Anthropic's infrastructure, no MCP
 # round-trip. max_uses caps searches per conversation turn so a single request
 # can't rack up unbounded $10/1k-search charges. allowed_callers=["direct"] is
 # required because _pick_model() can route to Haiku, which doesn't support
-# programmatic tool calling — the web_search_20260209 default
+# programmatic tool calling â€” the web_search_20260209 default
 # (["code_execution_20260120"]) 400s on Haiku.
 _WEB_SEARCH_TOOL = {
     "type": "web_search_20260209",
@@ -233,7 +224,7 @@ _WEB_SEARCH_TOOL = {
     "allowed_callers": ["direct"],
 }
 
-# Client-side tool — executed by ProjectNotesEditorTool, not Anthropic.
+# Client-side tool â€” executed by ProjectNotesEditorTool, not Anthropic.
 # Hardcoded to only ever touch knowledge_base/project_notes.md (see text_editor_tool.py).
 _NOTES_EDITOR_TOOL = ProjectNotesEditorTool()
 
@@ -244,7 +235,7 @@ async def _connect_mcp(app: FastAPI) -> None:
 
     Uses AsyncExitStack rather than a bare `async with` only so shutdown can
     close it from a separate line after `yield`, not because this connection
-    is ever re-opened later — see _mcp_crash_detected()'s docstring for why
+    is ever re-opened later â€” see _mcp_crash_detected()'s docstring for why
     an automatic reconnect isn't implemented.
     """
     server_params = StdioServerParameters(command=sys.executable, args=[SERVER_SCRIPT])
@@ -261,7 +252,7 @@ async def _connect_mcp(app: FastAPI) -> None:
     app.state.tool_names = tool_names + ["web_search", "str_replace_based_edit_tool"]
     # Kept alive for the app's lifetime so /resources and /prompts routes can
     # call list_resources()/read_resource()/list_prompts()/get_prompt() live
-    # instead of a stale startup snapshot — resources in particular change as
+    # instead of a stale startup snapshot â€” resources in particular change as
     # notes are added.
     app.state.mcp_session = mcp_session
     app.state._mcp_stack = stack
@@ -275,8 +266,8 @@ async def _mcp_crash_detected(err: Exception) -> None:
     anyio.create_task_group()) are bound to the asyncio Task that opened
     them, but a reconnect triggered from a request handler necessarily runs
     in a different Task than whichever one opened the connection being
-    replaced (lifespan()'s startup task, or an earlier reconnect). Closing —
-    or even just letting Python's garbage collector finalize — the old
+    replaced (lifespan()'s startup task, or an earlier reconnect). Closing â€”
+    or even just letting Python's garbage collector finalize â€” the old
     connection from a different Task raises "cancel scope in a different
     task than it was entered in" and corrupts anyio's task-group state badly
     enough to cancel unrelated in-flight work, including the brand-new
@@ -287,12 +278,12 @@ async def _mcp_crash_detected(err: Exception) -> None:
     already catch their own exceptions, so the subprocess dying at all is
     rare; `uvicorn --reload` already restarts on any file save; and this is
     a manually-run local tool with no uptime requirement. A manual restart
-    is the current recovery path — this function's job is only to make sure
+    is the current recovery path â€” this function's job is only to make sure
     that's a clean, understood failure, not a raw traceback.
     """
     logger.error(
         f"[mcp] Connection lost ({type(err).__name__}: {err}). "
-        f"A manual server restart is currently required to recover — see "
+        f"A manual server restart is currently required to recover â€” see "
         f"_mcp_crash_detected()'s docstring for why automatic reconnect isn't implemented.",
         exc_info=True,
     )
@@ -302,7 +293,7 @@ async def _call_mcp(coro):
     """Await an MCP session call, converting a detected subprocess crash into
     a clean 503 instead of letting anyio's raw exception reach the route as
     an unhandled 500. Shared by /resources, /resources/content, /prompts, and
-    POST /prompts/{name} — the same crash can surface from any of them, not
+    POST /prompts/{name} â€” the same crash can surface from any of them, not
     just /chat and /stream."""
     try:
         return await coro
@@ -314,7 +305,7 @@ async def _call_mcp(coro):
         ) from err
 
 
-# ── Lifespan: runs on startup and shutdown ───────────────────────────────────
+# â”€â”€ Lifespan: runs on startup and shutdown â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -323,7 +314,7 @@ async def lifespan(app: FastAPI):
     Everything before `yield` runs at startup.
     Everything after `yield` runs at shutdown.
 
-    We start the MCP server here so it stays alive for ALL requests —
+    We start the MCP server here so it stays alive for ALL requests â€”
     not started fresh on every API call.
     """
     await _connect_mcp(app)
@@ -351,21 +342,21 @@ async def lifespan(app: FastAPI):
     logger.info(f"MCP server ready. Tools: {app.state.tool_names}")
     yield
     # Tear down whichever MCP connection is current (startup's original one,
-    # or a later crash-recovery reconnect) — AsyncExitStack.aclose() is the
+    # or a later crash-recovery reconnect) â€” AsyncExitStack.aclose() is the
     # counterpart to the enter_async_context() calls in _connect_mcp().
     await app.state._mcp_stack.aclose()
-    # Langfuse batches spans and sends them on a background thread/timer —
+    # Langfuse batches spans and sends them on a background thread/timer â€”
     # without an explicit flush, whatever's still queued at shutdown is lost.
     if langfuse_client:
         langfuse_client.flush()
 
 
-# ── App setup ────────────────────────────────────────────────────────────────
+# â”€â”€ App setup â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 app = FastAPI(title="MCP Learning Agent", lifespan=lifespan)
 
 
-# ── Request / response models (Pydantic) ─────────────────────────────────────
+# â”€â”€ Request / response models (Pydantic) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 class Attachment(BaseModel):
     media_type: str
@@ -379,7 +370,7 @@ class ChatRequest(BaseModel):
     attachment: Attachment | None = None   # optional image/PDF for this turn only (not persisted)
 
 
-# ── Routes ───────────────────────────────────────────────────────────────────
+# â”€â”€ Routes â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 @app.get("/", response_class=HTMLResponse)
 async def home():
@@ -429,14 +420,14 @@ async def read_mcp_resource(uri: str):
         # ValueError: pydantic's AnyUrl validation for a malformed uri
         # (raised client-side, before any MCP round-trip). McpError: an
         # error raised inside mcp_server.py's own handler (e.g. "Unknown
-        # resource URI: ...") — confirmed via live testing that it crosses
+        # resource URI: ...") â€” confirmed via live testing that it crosses
         # the process boundary as McpError, not literally as the ValueError
         # mcp_server.py raised, since the exception is reconstructed from a
         # JSON-RPC error response, not passed by reference across processes.
         # Both carry safe, curated, input-focused text meant to be shown.
         raise HTTPException(status_code=400, detail=str(err))
     except Exception as err:
-        # Anything else is unexpected — log the real error server-side, but
+        # Anything else is unexpected â€” log the real error server-side, but
         # never forward its raw message, which could leak internal paths,
         # library internals, or other implementation details to the client.
         logger.error(f"[resources/content] Unexpected error: {type(err).__name__}: {err}", exc_info=True)
@@ -503,21 +494,6 @@ async def clear_session(session_id: str):
     return {"cleared": session_id}
 
 
-@app.get("/usage", response_class=HTMLResponse)
-async def usage_dashboard():
-    """Serve the cost dashboard UI."""
-    html = Path(__file__).parent.parent / "frontend" / "usage.html"
-    return HTMLResponse(html.read_text(encoding="utf-8"))
-
-
-@app.get("/usage/data")
-async def usage_data(project: str = None):
-    """Return aggregated token usage, cost data, and credit config as JSON."""
-    data = usage_summary(project=project)
-    data["credit"] = credit_status(project=project)
-    return data
-
-
 @app.get("/logs", response_class=HTMLResponse)
 async def logs_dashboard():
     """Serve the log viewer UI."""
@@ -528,7 +504,7 @@ async def logs_dashboard():
 @app.get("/logs/data")
 async def logs_data(level: str | None = None, limit: int = 200):
     """Return recent parsed log entries as JSON, optionally filtered by level.
-    Only reads today's log file (data/app.log) — rotation moves prior days to
+    Only reads today's log file (data/app.log) â€” rotation moves prior days to
     dated backup files, out of scope for this live-tail view."""
     all_entries = _parse_log_file(_LOG_FILE)
     counts = {"ERROR": 0, "WARNING": 0, "INFO": 0}
@@ -547,7 +523,7 @@ async def logs_conversations(limit: int = 20):
     """Return recent sessions with their full message history, newest first.
     Reads directly from the sessions table (already the source of truth for
     conversation content via session_get()/session_save()) rather than a
-    second, denormalized copy — one system of record, no drift risk if a
+    second, denormalized copy â€” one system of record, no drift risk if a
     session is ever deleted."""
     sessions = session_list()[:limit]
     conversations = [
@@ -555,21 +531,6 @@ async def logs_conversations(limit: int = 20):
         for s in sessions
     ]
     return {"conversations": conversations}
-
-
-class CreditRequest(BaseModel):
-    starting_balance: float
-    alert_threshold: float = 1.0
-    reset: bool = False
-    warning_threshold: float | None = None  # None = leave unchanged (not yet exposed in the UI)
-
-@app.post("/usage/credit")
-async def save_credit(req: CreditRequest):
-    """Save the user's starting Anthropic credit balance. reset=True starts a fresh
-    spend-tracking period from now, archiving the outgoing period's totals — never
-    deletes usage_logs, so historical charts are unaffected."""
-    credit_set(req.starting_balance, req.alert_threshold, reset=req.reset, warning_threshold=req.warning_threshold)
-    return {"saved": True, "starting_balance": req.starting_balance, "reset": req.reset}
 
 
 SYSTEM_PROMPT = [
@@ -583,7 +544,7 @@ SYSTEM_PROMPT = [
             "</role>\n\n"
             "<tool_routing_rules>\n"
             "For any question about a specific topic, subject, person, or project, "
-            "ALWAYS call search_docs first — do NOT call list_docs first. "
+            "ALWAYS call search_docs first â€” do NOT call list_docs first. "
             "search_docs searches document content semantically and is always preferred. "
             "Base your answer on those results if relevant.\n\n"
             "Only call list_docs if the user explicitly asks what files exist.\n\n"
@@ -595,11 +556,11 @@ SYSTEM_PROMPT = [
             "directly without searching. "
             "If documents are not yet indexed, call index_docs first.\n\n"
             "The str_replace_based_edit_tool (text editor) can ONLY view or edit "
-            "knowledge_base/project_notes.md — no other file. Use it when the user asks you to update, "
+            "knowledge_base/project_notes.md â€” no other file. Use it when the user asks you to update, "
             "add to, fix, or rewrite project_notes.md (e.g. after adding a new tool or feature). "
             "Always view the file first if you haven't already seen its current content this "
             "conversation, so str_replace has accurate context to match against. Do not use this "
-            "tool for any other file — if the user asks to edit a different file, explain that "
+            "tool for any other file â€” if the user asks to edit a different file, explain that "
             "this tool is restricted to project_notes.md.\n"
             "</tool_routing_rules>\n\n"
             "<examples>\n"
@@ -649,20 +610,20 @@ def _sanitize_input(message: str) -> str:
 
 def _validate_attachment(att: Attachment | None) -> None:
     """Raise HTTPException(400) on an unsupported type, invalid base64, or oversized
-    payload. Never logs att.data — only type/filename/size — per this project's
+    payload. Never logs att.data â€” only type/filename/size â€” per this project's
     standard against dumping large or sensitive payloads for diagnosis."""
     if att is None:
         return
     if att.media_type not in _ATTACHMENT_ALLOWED_TYPES:
         raise HTTPException(400, f"Unsupported attachment type: {att.media_type}")
-    # Strip whitespace/newlines before decoding — standard line-wrapped base64
+    # Strip whitespace/newlines before decoding â€” standard line-wrapped base64
     # encoders (Python's base64.encodebytes, the Unix base64 CLI) insert a
     # newline every 76 chars by default; only the bundled JS client's
     # single-line FileReader output would otherwise pass validate=True.
     cleaned = "".join(att.data.split())
     cap = _MAX_PDF_ATTACHMENT_BYTES if att.media_type == "application/pdf" else _MAX_IMAGE_ATTACHMENT_BYTES
     if len(cleaned) % 4 == 0:
-        # Exact decoded size derivable from the encoded length alone — reject an
+        # Exact decoded size derivable from the encoded length alone â€” reject an
         # oversized payload before paying the cost of actually decoding it.
         padding = len(cleaned) - len(cleaned.rstrip("="))
         if (len(cleaned) * 3) // 4 - padding > cap:
@@ -693,7 +654,7 @@ def _attachment_content_block(att: Attachment) -> dict:
 
 def _build_api_messages(windowed: list, attachment: Attachment | None, current_text: str) -> list:
     """Return the message list to send to Claude for THIS call only. Never mutates
-    `windowed` (or the `history` it was sliced from) — this is what keeps session
+    `windowed` (or the `history` it was sliced from) â€” this is what keeps session
     storage text-only while Claude still sees the attachment for the current turn.
     `windowed[-1]` is always the just-appended current-turn user message, since
     windowing only trims from the front."""
@@ -708,12 +669,12 @@ def _build_api_messages(windowed: list, attachment: Attachment | None, current_t
 
 
 def _history_text_for(message: str, attachment: Attachment | None) -> str:
-    """What actually gets persisted to session history — plain text only, ever.
+    """What actually gets persisted to session history â€” plain text only, ever.
     A lightweight marker notes an attachment existed, without storing the binary."""
     if attachment is None:
         return message
     # filename is documented as display-only and deliberately unvalidated by
-    # _validate_attachment() — but it still lands in persisted history and gets
+    # _validate_attachment() â€” but it still lands in persisted history and gets
     # resent to Claude as ordinary text on later turns, so it must go through the
     # same sanitization/length cap as any other user-controlled text before that.
     safe_name = _sanitize_input(attachment.filename) if attachment.filename else ""
@@ -724,7 +685,7 @@ def _history_text_for(message: str, attachment: Attachment | None) -> str:
 def _text_with_citations(block) -> str:
     """A text content block's text, with inline (p.N) markers appended for each
     citation carrying a page number. Shared by /chat and /stream so the citation
-    formatting logic (and the flat, non-nested start_page_number field shape —
+    formatting logic (and the flat, non-nested start_page_number field shape â€”
     see CLAUDE.md) only exists in one place."""
     text = block.text
     for c in (getattr(block, "citations", None) or []):
@@ -748,7 +709,7 @@ def _safe_window(hist: list, limit: int) -> list:
             break
     return window
 
-# Keywords that indicate doc/note/complex queries → use Sonnet
+# Keywords that indicate doc/note/complex queries â†’ use Sonnet
 _COMPLEX_SIGNALS = {
     "doc", "file", "note", "search", "find", "summarize", "summary",
     "read", "index", "h1b", "visa", "project", "analyze", "analysis",
@@ -758,7 +719,7 @@ _COMPLEX_SIGNALS = {
 
 def _pick_model(message: str, has_attachment: bool = False) -> str:
     """Route to Haiku for simple queries, Sonnet for doc/complex queries.
-    An attachment always routes to Sonnet — the text alone (often empty,
+    An attachment always routes to Sonnet â€” the text alone (often empty,
     since a user can send an attachment with no typed message) has no
     signal about the attached document/image's actual complexity."""
     if has_attachment:
@@ -769,200 +730,6 @@ def _pick_model(message: str, has_attachment: bool = False) -> str:
     if any(signal in msg for signal in _COMPLEX_SIGNALS):
         return "claude-sonnet-4-6"
     return "claude-haiku-4-5"
-
-
-async def _send_discord(message: str) -> bool:
-    """POST a message to the Discord webhook. Never raises — a failed alert
-    must never break the user's actual chat response."""
-    try:
-        async with httpx.AsyncClient(verify=False, timeout=10) as client:
-            resp = await client.post(DISCORD_WEBHOOK_URL, json={"content": message})
-            resp.raise_for_status()
-        return True
-    except Exception as e:
-        logger.warning(f"[alert] Discord webhook failed: {e}")
-        return False
-
-
-async def _maybe_send_low_credit_alert() -> None:
-    """Push a two-tier Discord alert as remaining balance drops: warning_threshold
-    (default $5) then alert_threshold (default $1, the "critical" tier).
-
-    Mirrors the exact "remaining" formula the dashboard banner uses (usage.html):
-    remaining = max(starting_balance - period_cost_usd, 0). Each tier has its own
-    cooldown so it won't spam Discord on every message while balance stays low;
-    each cooldown clears as soon as balance recovers back above that tier's
-    threshold, so the *next* drop alerts immediately instead of waiting out a
-    stale window. Critical takes priority — if already in the critical zone,
-    the warning tier is skipped (would be a redundant, less-urgent duplicate).
-    """
-    cfg = credit_status()
-    starting_balance = cfg.get("starting_balance") or 0
-    if starting_balance <= 0:
-        return  # no balance configured — nothing to alert on (matches dashboard gating)
-
-    alert_threshold = cfg.get("alert_threshold") or 1.0
-    warning_threshold = cfg.get("warning_threshold") or 5.0
-    remaining = max(starting_balance - (cfg.get("period_cost_usd") or 0), 0)
-
-    if remaining <= alert_threshold:
-        # Dropping into critical supersedes any prior warning — clear its cooldown so
-        # a later partial recovery back into the warning band re-alerts immediately
-        # instead of appearing to still be in an old warning cooldown window.
-        if cfg.get("last_warning_sent_at"):
-            clear_warning_cooldown()
-        last_sent = cfg.get("last_alert_sent_at")
-        if last_sent and (datetime.now() - datetime.fromisoformat(last_sent)) < ALERT_COOLDOWN:
-            return
-        message = (
-            f"🔴 **MCP Project — CRITICAL low credit**\n"
-            f"Remaining: **${remaining:.2f}** (critical threshold: ${alert_threshold:.2f})\n"
-            f"Starting balance: ${starting_balance:.2f}"
-        )
-        if await _send_discord(message):
-            mark_alert_sent()
-        return
-
-    # Above critical — clear a stale critical cooldown so the next drop alerts immediately
-    if cfg.get("last_alert_sent_at"):
-        clear_alert_cooldown()
-
-    if remaining <= warning_threshold:
-        last_warned = cfg.get("last_warning_sent_at")
-        if last_warned and (datetime.now() - datetime.fromisoformat(last_warned)) < ALERT_COOLDOWN:
-            return
-        message = (
-            f"🟡 **MCP Project — low credit warning**\n"
-            f"Remaining: **${remaining:.2f}** (warning threshold: ${warning_threshold:.2f})\n"
-            f"Starting balance: ${starting_balance:.2f}"
-        )
-        if await _send_discord(message):
-            mark_warning_sent()
-        return
-
-    # Above warning too — full recovery, clear a stale warning cooldown
-    if cfg.get("last_warning_sent_at"):
-        clear_warning_cooldown()
-
-
-async def _maybe_send_spend_spike_alert() -> None:
-    """Push a Discord alert when today's spend is unusually high vs. the trailing
-    7-day daily average — catches a runaway loop or bug *causing* spend, rather
-    than only the low balance that results from it. Capped at once per day.
-    A minimum absolute floor (SPIKE_MIN_ABSOLUTE) avoids false positives when
-    the trailing average is near-zero, where any small spend looks infinite.
-    """
-    today_str = date.today().isoformat()
-    cfg = credit_status()
-    if cfg.get("last_spike_alert_date") == today_str:
-        return  # already alerted today
-
-    today_cost = total_cost_for_date(today_str)
-    if today_cost < SPIKE_MIN_ABSOLUTE:
-        return
-
-    avg = trailing_daily_average(today_str, days=7)
-    if avg <= 0 or today_cost < avg * SPIKE_MULTIPLIER:
-        return
-
-    message = (
-        f"📈 **MCP Project — spend spike detected**\n"
-        f"Today so far: **${today_cost:.2f}** vs. 7-day average **${avg:.2f}**/day "
-        f"({today_cost / avg:.1f}x)\n"
-        f"Worth checking for a runaway loop or unexpected tool usage."
-    )
-    if await _send_discord(message):
-        mark_spike_alert_sent(today_str)
-
-
-async def _maybe_send_daily_digest() -> None:
-    """Send a recap of yesterday's usage on the first request of each new day.
-    No background scheduler — this app isn't guaranteed to be running at any
-    fixed wall-clock time, so the digest piggybacks on real traffic instead.
-    """
-    today_str = date.today().isoformat()
-    cfg = credit_status()
-    if cfg.get("last_digest_sent_date") == today_str:
-        return  # already sent today
-
-    yesterday_str = (date.today() - timedelta(days=1)).isoformat()
-    d = daily_digest(yesterday_str)
-    top_tools = ", ".join(f"{t['tool_name']} ({t['calls']})" for t in d["top_tools"]) or "none"
-    message = (
-        f"📋 **MCP Project — daily digest** ({yesterday_str})\n"
-        f"Spend: **${d['cost_usd']:.2f}** · Requests: {d['requests']} · "
-        f"Tokens: {d['input_tokens'] + d['output_tokens']:,}\n"
-        f"Top tools: {top_tools}"
-    )
-    # Same "remaining" formula the dashboard banner and low-credit alerts use —
-    # only shown when credit tracking is actually configured (starting_balance > 0).
-    starting_balance = cfg.get("starting_balance") or 0
-    if starting_balance > 0:
-        remaining = max(starting_balance - (cfg.get("period_cost_usd") or 0), 0)
-        message += f"\nAvailable credit: **${remaining:.2f}**"
-    if await _send_discord(message):
-        mark_digest_sent(today_str)
-
-
-async def _maybe_send_web_search_budget_alert() -> None:
-    """Push a Discord alert if web_search alone (the one tool with a real $/use
-    fee) exceeds WEB_SEARCH_DAILY_BUDGET today. Capped at once per day."""
-    today_str = date.today().isoformat()
-    cfg = credit_status()
-    if cfg.get("last_web_search_budget_alert_date") == today_str:
-        return  # already alerted today
-
-    cost = web_search_cost_for_date(today_str)
-    if cost < WEB_SEARCH_DAILY_BUDGET:
-        return
-
-    message = (
-        f"🔎 **MCP Project — web_search budget exceeded**\n"
-        f"web_search cost today: **${cost:.2f}** (budget: ${WEB_SEARCH_DAILY_BUDGET:.2f})\n"
-        f"At $0.01/search, that's {round(cost / 0.01)} searches so far today."
-    )
-    if await _send_discord(message):
-        mark_web_search_budget_alert_sent(today_str)
-
-
-async def _maybe_send_pricing_warning_alert() -> None:
-    """Push a Discord alert for any model that hit _PRICING's fallback (an
-    unrecognized model routed through _pick_model() without a real pricing
-    entry). One-time per model, not a daily cooldown — see
-    pricing_warnings_pending()'s docstring for why."""
-    pending = pricing_warnings_pending()
-    if not pending:
-        return
-
-    models_list = ", ".join(f"`{m}`" for m in pending)
-    message = (
-        f"⚠️ **MCP Project — missing pricing data**\n"
-        f"No `_PRICING` entry for: {models_list}\n"
-        f"Costs for these are being estimated using Sonnet's rate as a fallback — "
-        f"add a real entry in `database.py`'s `_PRICING` dict."
-    )
-    if await _send_discord(message):
-        for model in pending:
-            mark_pricing_warning_sent(model)
-
-
-async def _run_alert_checks() -> None:
-    """Run all Discord alert checks after a request logs usage. Each check is
-    isolated — one failing (e.g. a DB error) must not skip the others or ever
-    break the user's actual chat response."""
-    if not DISCORD_WEBHOOK_URL:
-        return
-    for check in (
-        _maybe_send_low_credit_alert,
-        _maybe_send_spend_spike_alert,
-        _maybe_send_daily_digest,
-        _maybe_send_web_search_budget_alert,
-        _maybe_send_pricing_warning_alert,
-    ):
-        try:
-            await check()
-        except Exception as e:
-            logger.warning(f"[alert] {check.__name__} failed: {e}")
 
 
 @app.post("/chat")
@@ -1019,14 +786,14 @@ async def chat(req: ChatRequest):
                     tools_used.append(block.name)
                 elif block.type == "server_tool_use":
                     # Server-side tools (web_search, code_execution, ...) arrive as
-                    # server_tool_use blocks, not tool_use — tracked separately so
+                    # server_tool_use blocks, not tool_use â€” tracked separately so
                     # "Cost by Tool" attributes their fee correctly.
                     tools_used.append(block.name)
                 elif block.type == "text" and block.text:
                     response_text += _text_with_citations(block)
     except (anyio.ClosedResourceError, anyio.BrokenResourceError) as err:
         # The mcp_server.py subprocess died mid-request (crash, OOM, killed).
-        # No automatic reconnect — see _mcp_crash_detected()'s docstring for
+        # No automatic reconnect â€” see _mcp_crash_detected()'s docstring for
         # why. Every request will fail this way until the server is restarted.
         await _mcp_crash_detected(err)
         _log_latency("/chat", _start_time, session_id=session_id, outcome="mcp_crash")
@@ -1037,7 +804,7 @@ async def chat(req: ChatRequest):
         ) from err
     except APIError as err:
         # AsyncAnthropic already retries 429/5xx/timeouts/connection errors internally
-        # (exponential backoff + jitter, default max_retries=2) before raising — this
+        # (exponential backoff + jitter, default max_retries=2) before raising â€” this
         # only fires once those retries are exhausted. Never let the raw SDK exception
         # (which can include request internals) reach the client as a raw 500.
         _log_latency("/chat", _start_time, session_id=session_id, outcome=type(err).__name__)
@@ -1050,10 +817,7 @@ async def chat(req: ChatRequest):
     history.append({"role": "assistant", "content": response_text})
     session_save(session_id, history)
 
-    # Persist token usage to SQLite for cost dashboard
     if has_usage:
-        usage_log(session_id, model, total_input, total_cache_write, total_cache_read, total_output, tools=tools_used, project="mcp-project", web_search_requests=total_web_searches)
-        await _run_alert_checks()
         await _spendgauge_report(session_id, model, total_input, total_cache_write, total_cache_read, total_output, tools_used, total_web_searches)
 
     latency_ms = _log_latency("/chat", _start_time, session_id=session_id, model=model, outcome="ok")
@@ -1080,10 +844,10 @@ async def stream_chat(req: ChatRequest):
 
     SSE format:  data: <json>\\n\\n
     Event types:
-      { type: "tool",  name: "get_weather" }   — tool being called
-      { type: "text",  content: "..." }         — text chunk from Claude
-      { type: "done",  session_id: "..." }      — response complete
-      { type: "error", message: "..." }         — something went wrong
+      { type: "tool",  name: "get_weather" }   â€” tool being called
+      { type: "text",  content: "..." }         â€” text chunk from Claude
+      { type: "done",  session_id: "..." }      â€” response complete
+      { type: "error", message: "..." }         â€” something went wrong
     """
     _start_time = time.perf_counter()
     session_id = req.session_id or str(uuid.uuid4())
@@ -1175,10 +939,7 @@ async def stream_chat(req: ChatRequest):
                 history.append({"role": "assistant", "content": response_text})
                 session_save(session_id, history)
 
-            # Persist token usage to SQLite for cost dashboard
             if has_usage:
-                usage_log(session_id, model, total_input, total_cache_write, total_cache_read, total_output, tools=tools_called, project="mcp-project", web_search_requests=total_web_searches)
-                await _run_alert_checks()
                 await _spendgauge_report(session_id, model, total_input, total_cache_write, total_cache_read, total_output, tools_called, total_web_searches)
 
             latency_ms = _log_latency("/stream", _start_time, session_id=session_id, model=model, outcome="ok")
@@ -1198,7 +959,7 @@ async def stream_chat(req: ChatRequest):
             yield f"data: {json.dumps(done_data)}\n\n"
 
         except (anyio.ClosedResourceError, anyio.BrokenResourceError) as e:
-            # Same reasoning as /chat: no automatic reconnect — see
+            # Same reasoning as /chat: no automatic reconnect â€” see
             # _mcp_crash_detected()'s docstring for why.
             await _mcp_crash_detected(e)
             _log_latency("/stream", _start_time, session_id=session_id, outcome="mcp_crash")
@@ -1208,7 +969,7 @@ async def stream_chat(req: ChatRequest):
             # function, in _build_api_messages(...)). Python decides whether a
             # name is local to a function by scanning the *entire* function
             # body for any assignment to it, regardless of order or which
-            # branch runs — so reassigning `message` here, even inside an
+            # branch runs â€” so reassigning `message` here, even inside an
             # except block that might never execute, would make every earlier
             # read of `message` in this function raise UnboundLocalError
             # instead of resolving to the closure variable. Confirmed live:

@@ -128,81 +128,44 @@ Not an MCP/server-side/client-side tool like the 10 above — this is a native A
 
 **Citations (PDF only):** `_attachment_content_block()` adds `citations: {enabled: true}` to `document`-type blocks (not `image` blocks — citations don't apply to images). When Claude cites a specific page, both endpoints append an inline `(p.N)` marker to the response text via the shared `_text_with_citations(block)` helper, which reads `start_page_number` directly off each citation object — extracted into one function after `/chat` and `/stream` each had their own copy of the identical loop (GitHub issue #10). **Gotcha found during testing:** the citation object's location fields are flat with a `type: "page_location"` discriminator string — not nested under a `.page_location` sub-attribute the way the field name might suggest. Also: citations only work against a PDF with a real embedded text layer — a purely rasterized/image-based PDF (e.g. one built by saving images via Pillow) has nothing for Claude to cite against, which is correct behavior, not a bug.
 
-**No new cost-tracking code needed** — image/PDF tokens bill as ordinary `input_tokens` in the API response, already captured by the existing `usage_log()` → `_estimate_cost()` pipeline. Confirmed during testing: a PDF-attached turn showed `2814 in` vs. `1002 in` for a plain-text follow-up in the same session, and the `/usage` totals picked up the difference automatically.
+**No new cost-tracking code needed** — image/PDF tokens bill as ordinary `input_tokens` in the API response, already captured the same way every other request's tokens are reported to SpendGaugeAI. Confirmed during testing (back when this project's own local dashboard still existed): a PDF-attached turn showed `2814 in` vs. `1002 in` for a plain-text follow-up in the same session, and the totals picked up the difference automatically.
 
 **Frontend (`chat.html`):** a 📎 button + hidden `<input type="file">` in the footer, client-side allowlist/size checks mirroring the backend exactly, and a filename chip with a remove (×) control. Drag-drop/paste and multiple attachments per turn are explicitly out of scope for now — file-picker, one file, is the only supported flow.
 
-## Cost Dashboard & Credit Tracking
+## Cost Dashboard & Credit Tracking — REMOVED 2026-07-19
 
-`GET  /usage`         — visual HTML dashboard (token usage, cost, daily chart, per-session table)
-`GET  /usage/data`    — JSON: totals, by_model, by_day, by_session, by_tool, by_project, credit config
-`GET  /usage/data?project=name` — same but filtered to one project
-`POST /usage/credit`  — save starting balance and alert threshold `{ starting_balance: 5.00, alert_threshold: 1.00, reset: false }`
+This project's own local `/usage` dashboard, credit tracking, and Discord alerting
+(`GET /usage`, `GET /usage/data`, `POST /usage/credit`, `_run_alert_checks()` and its six
+`_maybe_send_*` alert functions in `api.py`) were removed in favor of
+[SpendGaugeAI](https://github.com/vijayanan6/SpendGaugeAI) — see § Logging & Tracing below for
+this project's SpendGaugeAI reporting config, and that repo's own `docs/DESIGN.md` for the
+current feature set (it has the same 4-way token breakdown, cost by model/project/tool, credit
+tracker, and Discord alert types this section used to document, plus multi-app support without
+needing the "copy `database.py` into every project" approach below).
 
-Features: credit balance tracker, burn rate ($/day), estimated runway (labeled "Est. Runway" — a burn-rate forecast, not an actual credit expiration; API credits don't expire on a day count), 30/60/90-day cost forecast, per-session cost table, cost by tool, cost by project, low-credit alert badge in chat header (pulses red when remaining < threshold).
+**`database.py`'s underlying tables/functions (`usage_logs`, `credit_config`, `pricing_warnings`,
+`usage_log()`, `usage_summary()`, `credit_status()`, `credit_set()`, `daily_digest()`, etc.) were
+deliberately left in place, unused** — removing them would mean editing the shared `init_db()`
+that also creates `notes`/`sessions`, for a benefit (dead code cleanup) that didn't justify the
+risk. The historical data is still in `data/data.db` if it's ever worth revisiting; nothing reads
+it anymore.
 
-**Pricing table maintenance:** `database.py`'s `_PRICING` dict is a manual snapshot — Anthropic's API has no endpoint that returns live pricing (the Models API returns capabilities/context window, not cost). Found stale on 2026-07-15: `claude-haiku-4-5` carried old Haiku-3.5-era rates ($0.0008/$0.004 per 1K instead of the correct $0.001/$0.005), undercounting every Haiku-routed request by ~20%, caught only by comparing the dashboard's "remaining" balance against the real console.anthropic.com figure — fixed, and all 44 affected historical rows in `usage_logs` were recomputed and backfilled (not just fixed going forward). Re-verify `_PRICING` by hand against console.anthropic.com/settings/billing (or the claude-api skill's Current Models table) whenever Anthropic changes pricing, or whenever `_pick_model()` starts routing to a model not yet in the dict. `_estimate_cost()`'s fallback for an unrecognized model now prints a console warning instead of silently inheriting Sonnet's rate — that silent fallback is exactly what let the Haiku drift go unnoticed.
-
-**web_search cost tracking:** `web_search` is billed at $10 per 1,000 searches ($0.01/use) on top of normal token costs — a flat server-side fee, not derivable from token counts. `usage_logs.web_search_requests` (read from `usage.server_tool_use.web_search_requests` on each turn) stores the raw count; `_estimate_cost()` in `database.py` folds `web_search_requests × $0.01` into `estimated_cost_usd`, so it flows automatically into every existing aggregate (by_model, by_day, by_session, by_tool, by_project, credit/burn-rate math) with no separate dashboard wiring. The "Web Searches" stat card on `/usage` surfaces the raw count.
-
-**Cost by Tool attribution — one turn's cost, once per distinct tool, not once per mention:** `usage_summary()`'s `by_tool` query explodes each row's `tools_used` JSON array via `json_each()`. `estimated_cost_usd` belongs to the *turn*, not to any individual tool call within it — a turn that calls the same tool more than once (e.g. `tools_used = ["code_execution", "web_search", "code_execution", "web_search", "code_execution"]`) would have that turn's cost summed once per repeated mention if grouped directly on the exploded rows, inflating `cost_usd`/`avg_cost_usd` by however many times a tool was called within one turn (found via a real example: 3 `code_execution` mentions in 1 turn reported as $0.1510, 3× the turn's real $0.0503 cost — the `calls` count next to it was correct, which is exactly what made the wrong number look trustworthy). Fixed by grouping to `(usage_logs.id, tool_name)` first — attributing a turn's cost once per distinct tool it used — before aggregating across turns. See Insight #37. **The same dedup fix also silently corrected `str_replace_based_edit_tool`'s cost** (also had within-turn repeats, also 3×-inflated) — confirming the fix was general, not narrowly patched to the one case that surfaced it.
-
-**`code_execution` is relabeled to `web_search` in the `by_tool` display, deliberately:** `code_execution` has no pricing model of its own in `_estimate_cost()` (unlike `web_search`'s flat $0.01/use fee) — its one historical appearance (2026-07-08, before `allowed_callers: ["direct"]` was committed) was Anthropic's sandbox wrapping a `web_search` call, not independent work. The `CASE WHEN json_each.value = 'code_execution' THEN 'web_search'` mapping lives only in the `by_tool` aggregation query — the raw `tools_used` JSON in `usage_logs` is never rewritten, so the actual historical record (what the API really reported) stays intact if it's ever worth auditing again. This is a presentation decision, not a data correction — worth distinguishing from the dedup fix above, which corrected genuinely wrong math.
-
-### Discord Mobile Alerts
-
-The in-dashboard badge only helps if the browser tab is open. `_run_alert_checks()` in `api.py` runs after every logged request (`/chat` and `/stream`) and pushes real-time alerts to a Discord webhook — Discord's mobile app turns these into phone push notifications, so alerts reach you without the dashboard open.
-
-**Config:** `DISCORD_WEBHOOK_URL` in `.env` (optional — every check silently no-ops if unset). No other secret involved; email was deliberately skipped as a channel — it needs a heavier credential (SMTP/app password) for a channel that isn't checked. The URL lives only in `.env` (gitignored), read via `os.environ`, never stored in SQLite or returned by any API endpoint.
-
-**Six alert types, each independently cooldown-gated so none of them can spam Discord:**
-
-| Alert | Trigger | Cooldown | Config |
-|---|---|---|---|
-| 🟡 Warning (low balance) | `remaining ≤ warning_threshold` (and above critical) | 24h, clears on recovery above `warning_threshold` | `credit_config.warning_threshold`, default $5 |
-| 🔴 Critical (low balance) | `remaining ≤ alert_threshold` | 24h, clears on recovery above `alert_threshold`; also clears a stale warning cooldown (critical supersedes warning) | `credit_config.alert_threshold`, default $1 — same field the dashboard badge already uses |
-| 📈 Spend spike | Today's spend ≥ `SPIKE_MIN_ABSOLUTE` ($1) **and** ≥ `SPIKE_MULTIPLIER` (3×) the trailing 7-day daily average | Once per calendar day | Constants in `api.py` — catches a runaway loop or bug *causing* spend, not just the low balance that results from it |
-| 🔎 web_search budget | `web_search`'s cost alone (exact, via `web_search_requests × $0.01`) exceeds `WEB_SEARCH_DAILY_BUDGET` ($1) for the day | Once per calendar day | Constant in `api.py` |
-| 📋 Daily digest | First request of a new calendar day | Once per calendar day | N/A — fires with yesterday's spend/tokens/top-tools recap, plus an "Available credit" line (same `remaining` formula as the dashboard banner) when credit tracking is configured (`starting_balance > 0`) |
-| ⚠️ Missing pricing data | `_pick_model()` routes to a model with no `_PRICING` entry (`_estimate_cost()`'s fallback fires) | **One-time per model**, not a daily cooldown — a config gap, not a spend threshold; stops recurring once a real `_PRICING` entry is added | `pricing_warnings` SQLite table (`model`, `first_seen_at`, `alert_sent_at`) — GitHub issue #5. Previously this only printed to stdout, which is exactly the "silent until someone happens to notice" failure mode that let the Haiku pricing drift above go unnoticed in the first place. |
-
-**Why the digest fires on first-request-of-the-day, not a fixed time:** this app only runs when `uvicorn` is started — there's no guarantee it's running at any fixed wall-clock time, so a background scheduler (e.g. APScheduler firing at 8am) could silently miss days entirely. Piggybacking on real traffic means the digest always eventually fires, just possibly later than a fixed hour on light-usage days.
-
-**`warning_threshold` is stored but not yet in the dashboard UI** — change it via `POST /usage/credit` with `{"warning_threshold": N}` (omit the field entirely to leave it unchanged; the existing dashboard form doesn't send it, so it can't accidentally reset it).
-
-**Two-tier low-balance logic (`_maybe_send_low_credit_alert`) mirrors the exact "remaining" formula the dashboard banner uses** (`usage.html`): `remaining = max(starting_balance - period_cost_usd, 0)`. Critical is checked first — being in the critical zone skips the warning tier entirely (it would be a redundant, less-urgent duplicate).
-
-### Resetting Spend Tracking (Balance Top-Ups)
-
-A real Anthropic account top-up doesn't mean past spend should keep counting against the new balance. The "Reset spend tracking" checkbox in the credit banner (with a confirm prompt, since it overwrites the single archived snapshot below) sets `reset: true` on `POST /usage/credit`, which:
-
-- Starts a new tracking period from now (`credit_config.period_start`) — remaining balance, burn rate, and forecasts recalculate from that point forward.
-- Archives the outgoing period's totals into `prev_period_cost_usd` / `prev_period_days` / `prev_period_end` — a **single slot**, overwritten on every reset. There's a confirm dialog specifically because this data isn't recoverable if you reset twice in a row.
-- **Never touches `usage_logs`.** All historical charts (daily chart, per-model, per-session, per-project tables) always show full lifetime data regardless of resets — only the credit banner's live remaining/burn-rate math is period-scoped.
-
-`database.py`'s `credit_status(project=None)` computes the live period's spend/active-days (falling back to all-time totals if never reset, so existing installs behave unchanged). The dashboard JS falls back to the *previous* period's burn rate — marked `(est.)` with a tooltip — for forecasting in the gap right after a reset, before any usage has landed in the new period; it switches to real numbers once a request is logged.
-
-## Multi-Project Support — How to Wire Up a New Project
-
-This dashboard supports multiple projects reporting to a single SQLite database. All data is tagged by `project` column in `usage_logs`.
-
-**To add a second project:**
-
-1. Copy `src/backend/database.py` into the new project (or import it as a shared module)
-2. Point `DB_PATH` to the same `data.db` file used by this project:
-   ```python
-   DB_PATH = Path("c:/Users/vijay/OneDrive/Desktop/Claude Workspace/MCP Project/data/data.db")
-   ```
-3. In the new project's streaming endpoint, pass the project name to `usage_log()`:
-   ```python
-   usage_log(session_id, model, input, cache_write, cache_read, output,
-             tools=tools_called, project="my-new-project")
-   ```
-4. That's it — the new project appears in the dashboard dropdown automatically.
-
-**Filter in dashboard:** Use the Project dropdown in the header to view one project at a time. All cards, charts, and tables filter to the selected project.
-
-**Future upgrade path:** When deployed to GCP, replace the shared file path with a `POST /usage/log` endpoint so any project anywhere can report usage over HTTP — this is Option A (centralised dashboard). Option C (shared file) works locally; Option A works in production.
+**Worth preserving from the removed implementation, in case this pattern comes up again:**
+- **Pricing table drift is a real, recurring failure mode, not hypothetical.** `_PRICING` (a
+  manual snapshot — Anthropic's API has no live-pricing endpoint) went stale on 2026-07-15:
+  `claude-haiku-4-5` carried old Haiku-3.5-era rates, undercounting every Haiku-routed request by
+  ~20%, caught only by comparing the dashboard's balance against the real console.anthropic.com
+  figure. Re-verify any hardcoded pricing table by hand whenever Anthropic changes rates.
+- **Per-tool cost attribution needs "once per distinct tool per turn," not "once per mention."**
+  A turn calling the same tool 3 times naively summed as 3× the turn's real cost if grouped
+  directly on exploded `tools_used` JSON rows — the `calls` count looked right, which is exactly
+  what made the wrong `cost_usd` number look trustworthy. Fix: group to `(row_id, tool_name)`
+  first, then aggregate. See that project's Insight #37 if this comes up again.
+- **A background scheduler (APScheduler etc.) can silently miss days** if the app isn't
+  guaranteed to be running at a fixed wall-clock time — piggybacking a "daily digest" on the
+  first real request of a new day instead is more reliable for a locally-run tool.
+- **A silent fallback (e.g. defaulting an unrecognized model to Sonnet's price) is exactly what
+  lets pricing drift go unnoticed** — surface it (console warning, one-time alert) instead.
 
 ## Persistence
 
@@ -234,13 +197,13 @@ What *was* missing: a clean failure path once those built-in retries are exhaust
 
 **Structured logging** — `api.py` uses a named `logger` (Python's `logging` module, not `print()`), with two handlers: console (level scales with `ENVIRONMENT` — `DEBUG` in development, `INFO` elsewhere) and a `TimedRotatingFileHandler` writing to `data/app.log` (rotates at midnight, keeps 14 days, always captures `INFO`+ regardless of environment). Levels are chosen deliberately per call site: routine events (startup, indexing) are `INFO`; non-fatal caught failures (a Discord webhook failing, one alert check failing) are `WARNING`; genuinely unexpected/crash-class failures are `ERROR` with `exc_info=True` so the full traceback lands in the file, not just a one-line message.
 
-**`GET /logs`** — a dashboard for browsing `data/app.log` (today's entries only; rotation moves prior days to dated backup files, out of scope for this live-tail view). `_parse_log_file()` parses the timestamp-prefixed lines into structured entries, folding unprefixed continuation lines (tracebacks) into whichever entry precedes them. `GET /logs/data?level=ERROR&limit=200` returns the parsed JSON; the page itself has click-to-filter summary cards, expandable tracebacks, and the same tab-visibility-aware polling as `/usage`.
+**`GET /logs`** — a dashboard for browsing `data/app.log` (today's entries only; rotation moves prior days to dated backup files, out of scope for this live-tail view). `_parse_log_file()` parses the timestamp-prefixed lines into structured entries, folding unprefixed continuation lines (tracebacks) into whichever entry precedes them. `GET /logs/data?level=ERROR&limit=200` returns the parsed JSON; the page itself has click-to-filter summary cards, expandable tracebacks, and tab-visibility-aware polling.
 
 **Request latency** — `_log_latency(route, start_time, **fields)` is called at *every* exit point of both `/chat` and `/stream` (success and every failure path alike — latency on a failing request is exactly as useful to know as on a succeeding one), logged at `INFO` and surfaced in the response body (`/chat`) / `done` SSE event (`/stream`).
 
 **Langfuse tracing (optional)** — set `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` in `.env` (free tier at cloud.langfuse.com) to get full end-to-end tracing of every Claude API call. Same optional-feature pattern as `DISCORD_WEBHOOK_URL`: `langfuse_client` is `None` if the keys aren't set, and every call site checks for that before doing anything — the feature no-ops cleanly rather than erroring if unconfigured. `/chat` and `/stream` each open a `generation` span (via `langfuse_client.start_observation(as_type="generation", ...)`, **not** the older `@observe()`-decorator-only or manual `trace()`/`generation()` context-manager APIs some tutorials describe — the SDK went through a major v3→v4 rework, now OpenTelemetry-based; verified via context7 before writing this, not assumed from training data) around the `tool_runner` call, closed at every exit point via the shared `_lf_finish()` helper, which never lets a Langfuse SDK failure break the actual chat response. `langfuse_client.flush()` runs at shutdown (`lifespan()`) since spans are batched and sent on a background timer — without an explicit flush, whatever's still queued at shutdown is lost.
 
-**SpendGaugeAI reporting (optional, dogfooding)** — set `SPENDGAUGEAI_URL` and `SPENDGAUGEAI_API_KEY` in `.env` to additionally report every request's usage to a running [SpendGaugeAI](https://github.com/vijayanan6/SpendGaugeAI) instance (a separate, standalone sibling project — see its own `docs/DESIGN.md` §10). Same optional-feature pattern as Langfuse/Discord, with one more layer: `spendgauge_client` is `None` if the env vars aren't set *or* if the `spendgaugeai` package isn't installed (it's intentionally not a hard dependency in `requirements.txt` — `pip install spendgaugeai` or `pip install -e ../SpendGaugeAI` to opt in). `_spendgauge_report()` is called right alongside the existing local `usage_log()` call in both `/chat` and `/stream`, wrapped in its own try/except (on top of `SpendGaugeAIClient.alog()`'s own internal silent-failure guarantee — belt and suspenders, matching this file's other optional integrations) so a SpendGaugeAI outage can never break a real chat response. This project's own local `usage_log()`/`/usage` dashboard are completely unaffected either way — it's a second, independent reporting path, not a replacement.
+**SpendGaugeAI reporting** — set `SPENDGAUGEAI_URL` and `SPENDGAUGEAI_API_KEY` in `.env` to report every request's usage to a running [SpendGaugeAI](https://github.com/vijayanan6/SpendGaugeAI) instance (a separate, standalone sibling project — see its own `docs/DESIGN.md` §10). Same optional-feature pattern as Langfuse, with one more layer: `spendgauge_client` is `None` if the env vars aren't set *or* if the `spendgaugeai` package isn't installed (it's intentionally not a hard dependency in `requirements.txt` — `pip install spendgaugeai` or `pip install -e ../SpendGaugeAI` to opt in). `_spendgauge_report()` is called in both `/chat` and `/stream`, wrapped in its own try/except (on top of `SpendGaugeAIClient.alog()`'s own internal silent-failure guarantee — belt and suspenders, matching this file's other optional integrations) so a SpendGaugeAI outage can never break a real chat response. As of 2026-07-19 this is the **only** usage/cost/alert reporting path this project has — its own local `usage_log()`/`/usage` dashboard was removed in favor of it (see § Cost Dashboard & Credit Tracking above).
 
 ## SSL Note (Windows)
 

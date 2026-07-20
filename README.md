@@ -27,8 +27,7 @@ MCP Project/
 │   │   ├── database.py              — SQLite layer (notes, sessions, usage_logs, credit_config)
 │   │   └── rag.py                   — ChromaDB semantic search
 │   └── frontend/
-│       ├── chat.html            — Browser chat UI (SSE streaming, credit alert badge)
-│       └── usage.html           — AI Cost Dashboard (tokens, cost, forecast, multi-project)
+│       └── chat.html            — Browser chat UI (SSE streaming)
 ├── scripts/
 │   ├── convert_pdfs.py          — Tesseract OCR for scanned PDFs
 │   ├── inspect_db.py            — Utility to view SQLite contents
@@ -116,7 +115,7 @@ pre-indexed `knowledge_base/` corpus used by `search_docs`.
 - **Citations** — PDF attachments get page citations enabled; when Claude cites specific content,
   the response includes an inline `(p.N)` page reference.
 - **No new cost tracking needed** — image/PDF tokens bill as ordinary input tokens, already
-  captured by the existing cost dashboard.
+  captured the same way every other request's usage is.
 - **Limits served from the backend** — `GET /attachment-limits` is the single source of truth
   for allowed file types and size caps; the frontend fetches it on load instead of hardcoding
   a second copy that could drift out of sync.
@@ -159,8 +158,8 @@ above. To run under a different environment, set `ENVIRONMENT` and create a matc
 python -m uvicorn api:app --reload --port 8000 --app-dir src/backend
 ```
 
-Open **`http://localhost:8000`** for the chat UI, or **`http://localhost:8000/usage`** for the
-AI Cost Dashboard.
+Open **`http://localhost:8000`** for the chat UI. Cost/usage tracking and alerting are handled by
+[SpendGaugeAI](https://github.com/vijayanan6/SpendGaugeAI) — see below.
 
 ### Or run the CLI agent
 ```powershell
@@ -171,36 +170,14 @@ python src/backend/agent.py
 
 ## AI Cost Dashboard
 
-Full observability into what your Claude API usage actually costs — token-level, session-level,
-tool-level, and multi-project.
-
-| Endpoint | Purpose |
-|---|---|
-| `GET /usage` | Visual HTML dashboard |
-| `GET /usage/data` | JSON: totals, by_model, by_day, by_session, by_tool, by_project, credit config |
-| `GET /usage/data?project=name` | Same, filtered to one project |
-| `POST /usage/credit` | Save starting balance + alert threshold |
-
-Features: 4-way token breakdown (input / cache write / cache read / output), cost by model
-(Haiku vs Sonnet), 14-day daily usage chart, **30/60/90-day cost forecast**, cost by tool
-(MCP and non-MCP — see below), cost by project, per-session cost ranking, a "Web Searches"
-stat card, credit balance tracker with burn rate and days remaining, and a low-credit alert
-badge that pulses in the chat header.
-
-`web_search`'s flat $10/1,000-searches fee (separate from token costs) is folded into
-`estimated_cost_usd` automatically, so it flows into every chart above with no special
-handling — see `CLAUDE.md` for how.
-
-**Mobile alerts:** set `DISCORD_WEBHOOK_URL` in `.env` to get real-time Discord push
-notifications (via Discord's mobile app) instead of only the passive in-browser badge —
-covers low-balance warnings (2 tiers), a spend-spike alert, a per-tool budget alert for
-`web_search`, a daily usage digest (spend/tokens/top-tools recap plus available credit
-remaining), and a one-time missing-pricing-data alert if a model gets routed without a
-`_PRICING` entry. Fully optional; every check no-ops if unset. See
-`CLAUDE.md` § Discord Mobile Alerts for the full trigger/cooldown design.
-
-This dashboard tracks **Anthropic API usage only** — not your Claude Pro subscription (a separate,
-flat-fee product). See `CLAUDE.md` for the full feature list and multi-project setup instructions.
+This project's own local `/usage` dashboard (token/cost/session tracking, credit balance,
+Discord alerts) was removed 2026-07-19 in favor of
+[SpendGaugeAI](https://github.com/vijayanan6/SpendGaugeAI) — the standalone, general-purpose
+extraction of this exact dashboard, with the same feature set (4-way token breakdown, cost by
+model/project/tool, credit balance tracker with burn rate/runway, and the same Discord alert
+types) plus multi-app support. This project reports to it via `SPENDGAUGEAI_URL`/
+`SPENDGAUGEAI_API_KEY` in `.env` — see § Logging, Errors & Tracing below for setup. Tracks
+**Anthropic API usage only** — not your Claude Pro subscription (a separate, flat-fee product).
 
 ---
 
@@ -220,12 +197,12 @@ every Claude API call, viewable in Langfuse's own dashboard. Fully optional — 
 no-ops cleanly if unset, same pattern as the Discord webhook. See `CLAUDE.md` § Logging & Tracing
 for the full design.
 
-**Optional: SpendGaugeAI reporting.** Set `SPENDGAUGEAI_URL` and `SPENDGAUGEAI_API_KEY` in `.env`
-and `pip install spendgaugeai` to additionally report every request's usage to a running
+**SpendGaugeAI reporting.** Set `SPENDGAUGEAI_URL` and `SPENDGAUGEAI_API_KEY` in `.env` and
+`pip install spendgaugeai` to report every request's usage to a running
 [SpendGaugeAI](https://github.com/vijayanan6/SpendGaugeAI) instance — this project's own
-extraction, dogfooding its budget-control dashboard. Fully optional and additive: this project's
-local `/usage` dashboard keeps working completely unchanged either way. See `CLAUDE.md` § Logging
-& Tracing for the full design.
+extraction, now the only place usage/cost/credit/alerts are tracked (this project's own local
+`/usage` dashboard was removed 2026-07-19; see § AI Cost Dashboard above). See `CLAUDE.md`
+§ Logging & Tracing for the full design.
 
 ---
 
@@ -338,7 +315,7 @@ This handles documents of any size — only the relevant parts are sent to Claud
 | `lifespan` | `api.py` | Keeps MCP server alive across all HTTP requests |
 | `StreamingResponse` | `api.py` | SSE streaming to the browser |
 | `_pick_model()` | `api.py` | Routes each message to Haiku or Sonnet |
-| `usage_log()` | `database.py` | Records tokens, cost, tools called, project per request |
+| `_spendgauge_report()` | `api.py` | Reports tokens, cost, tools called per request to SpendGaugeAI |
 | `init_db()` | `database.py` | Creates SQLite tables on startup |
 | `index_all()` | `rag.py` | Chunks + embeds all docs into ChromaDB |
 | `search()` | `rag.py` | Semantic similarity search |
