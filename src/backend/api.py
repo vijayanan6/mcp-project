@@ -80,6 +80,11 @@ langfuse_client = Langfuse() if LANGFUSE_ENABLED else None
 SPENDGAUGEAI_URL = os.environ.get("SPENDGAUGEAI_URL")
 SPENDGAUGEAI_API_KEY = os.environ.get("SPENDGAUGEAI_API_KEY")
 SPENDGAUGEAI_ENABLED = bool(SPENDGAUGEAI_URL and SPENDGAUGEAI_API_KEY)
+# Separate opt-in from SPENDGAUGEAI_ENABLED itself: reporting usage is silent
+# and can never surprise anyone, but blocking a real chat response is a user-
+# visible behavior change, so it needs its own explicit flag rather than
+# turning on automatically the moment a budget happens to be configured.
+SPENDGAUGEAI_ENFORCE = os.environ.get("SPENDGAUGEAI_ENFORCE", "").lower() in ("1", "true", "yes")
 spendgauge_client = None
 if SPENDGAUGEAI_ENABLED:
     try:
@@ -111,6 +116,19 @@ async def _spendgauge_report(session_id, model, input_tokens, cache_write, cache
         )
     except Exception as e:
         logging.getLogger(__name__).warning(f"[spendgaugeai] report failed: {e}")
+
+
+async def _spendgauge_budget_exceeded() -> bool:
+    """Best-effort pre-call budget check (SpendGaugeAI's hard spend-cap
+    enforcement â€” docs/DESIGN.md Â§8b in that repo). Only ever returns True on
+    a definitive "yes, blocked" answer from SpendGaugeAI; every other outcome
+    (disabled, not opted in, check timed out, SpendGaugeAI unreachable) fails
+    open and lets the real Claude call proceed, same fail-open guarantee
+    acheck_budget() itself already makes â€” this wrapper just adds the
+    SPENDGAUGEAI_ENFORCE gate on top."""
+    if not (SPENDGAUGEAI_ENABLED and SPENDGAUGEAI_ENFORCE):
+        return False
+    return await spendgauge_client.acheck_budget() is True
 
 
 def _lf_finish(generation, **update_kwargs) -> None:
@@ -743,6 +761,9 @@ async def chat(req: ChatRequest):
     session_id = req.session_id or str(uuid.uuid4())
     message = _sanitize_input(req.message)
     _validate_attachment(req.attachment)
+    if await _spendgauge_budget_exceeded():
+        _log_latency("/chat", _start_time, session_id=session_id, outcome="budget_exceeded")
+        raise HTTPException(402, "This app's Claude budget has been exhausted. Try again later or contact the admin.")
     history = session_get(session_id)
     history.append({"role": "user", "content": _history_text_for(message, req.attachment)})
 
@@ -853,6 +874,9 @@ async def stream_chat(req: ChatRequest):
     session_id = req.session_id or str(uuid.uuid4())
     message = _sanitize_input(req.message)
     _validate_attachment(req.attachment)   # before StreamingResponse is built, so a 400 is a normal JSON response
+    if await _spendgauge_budget_exceeded():   # same reasoning: a normal 402 JSON response, not an SSE error event
+        _log_latency("/stream", _start_time, session_id=session_id, outcome="budget_exceeded")
+        raise HTTPException(402, "This app's Claude budget has been exhausted. Try again later or contact the admin.")
     history = session_get(session_id)
     history.append({"role": "user", "content": _history_text_for(message, req.attachment)})
 

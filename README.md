@@ -204,6 +204,14 @@ extraction, now the only place usage/cost/credit/alerts are tracked (this projec
 `/usage` dashboard was removed 2026-07-19; see § AI Cost Dashboard above). See `CLAUDE.md`
 § Logging & Tracing for the full design.
 
+**SpendGaugeAI hard budget enforcement (opt-in).** Set `SPENDGAUGEAI_ENFORCE=1` in `.env` (on top
+of the two vars above) to actually block `/chat` and `/stream` with a `402` once the budget you've
+set on the SpendGaugeAI dashboard is exhausted, instead of only reporting after the fact. A
+separate flag from the reporting vars on purpose — blocking a real chat response is a
+user-visible behavior change, so it needs its own explicit opt-in. Fails open (never blocks) if
+SpendGaugeAI is unreachable or the check times out. Off by default; unset means today's existing
+report-only behavior is unchanged.
+
 ---
 
 ## Model Routing & Prompt Caching
