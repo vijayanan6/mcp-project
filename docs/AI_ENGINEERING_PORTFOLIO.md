@@ -34,6 +34,11 @@ Browser ──HTTP/SSE──► FastAPI (api.py) ──stdio/JSON-RPC──► M
                            └──► Anthropic API (Claude)      SQLite + ChromaDB
 ```
 
+This project became the seed for two additional, independent real products, not just a single self-contained demo:
+
+- **[SpendGaugeAI](https://github.com/vijayanan6/SpendGaugeAI)** — this project's cost-observability dashboard, rebuilt and extracted into a standalone, self-hosted, publishable product: its own GitHub repo, MIT license, official Python and TypeScript client SDKs, a real HTTP API contract instead of a shared SQLite file, hard spend-cap enforcement, and budget-aware model downgrade. See section 21.
+- **Pragya AI Assistant** — this project's AI-agent core (chat, MCP tools, RAG, multimodal attachments), extracted into a separate, independently-versioned real assistant used day to day, with its own architecture choices — including a deliberately different SpendGaugeAI integration pattern that ended up surfacing four production bugs in SpendGaugeAI itself. See section 22.
+
 **Portfolio:** [github.com/vijayanan6/mcp-project/blob/main/docs/AI_ENGINEERING_PORTFOLIO.md](https://github.com/vijayanan6/mcp-project/blob/main/docs/AI_ENGINEERING_PORTFOLIO.md)
 
 ---
