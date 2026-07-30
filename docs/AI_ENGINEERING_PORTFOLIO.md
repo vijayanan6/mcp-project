@@ -587,6 +587,20 @@ Extracted the AI-agent core (chat, MCP tools, RAG, multimodal attachments) out o
 
 ---
 
+### 23. Security Audit and Remediation on a Product That Actually Handles Sensitive Data — Pragya AI Assistant
+
+Ran a full security audit against Pragya once it started handling financial and immigration documents plus a real email-send capability — not a one-off ask, a discipline: measured it honestly against industry standard rather than assuming "it works" meant "it's secure." Findings, ranked by severity: no authentication at all on the network-listening service, disabled TLS certificate verification on the Anthropic API client, a bypassable `eval()` sandbox, a fragile path-confinement check, a root-user Docker container, over-permissive token-cache file permissions, and no rate limiting.
+
+**Fixed the highest-severity finding first — a real access-control gap, not a checkbox.** Built shared API key authentication that fails *closed* (the opposite default from every optional integration already in the project) and is enforced by one middleware rather than per-route dependencies — specifically so a future new route can't accidentally end up unauthenticated the same way FastAPI's own auto-generated `/docs` endpoint had been sitting open the whole time.
+
+**Live testing surfaced a second, unrelated bug the design review hadn't caught.** The first version of the frontend fix could show up to three stacked confirmation dialogs when a stale key failed, because three different page-load requests each independently tried to recover from their own 401 with no shared coordination. Traced to a genuine JavaScript concurrency quirk (a *first* missing-key prompt happens to serialize safely, since the browser's prompt API blocks the whole thread — but a *wrong* cached key doesn't get that same protection, since the failing requests are already in flight in parallel). Fixed with a shared in-flight-promise guard, reverified live in a real browser session down to exactly one prompt.
+
+**A real mistake, caught and corrected mid-session, is on the record too.** Briefly printed a freshly generated auth key to a terminal transcript while wiring up a verification test. Caught it, rotated the key immediately, and confirmed the old value no longer worked before considering the task done — the same "don't just assume a fix landed, check it" standard applied to a mistake of my own making, not just to the code.
+
+**Why this matters:** an audit that only lists gaps is a report; the discipline that actually matters is closing the highest-severity finding first, verifying the fix against the real deployed system rather than the code in isolation, and being straightforward about a mistake made along the way instead of quietly fixing it and moving on.
+
+---
+
 ## Key Engineering Decisions
 
 | Decision | Why |
@@ -601,6 +615,7 @@ Extracted the AI-agent core (chat, MCP tools, RAG, multimodal attachments) out o
 | `.env` over OS env vars | Portable, project-scoped, git-ignored |
 | Client-side cost estimation | Token count × pricing table — no extra API call needed |
 | Credit alert in chat header | Surface spend pressure where the user is working, not a separate admin screen |
+| Fail-closed auth, one middleware not per-route checks | Every optional integration elsewhere defaults permissive; a real access-control fix needs the opposite default, and a route added later can't accidentally end up unprotected |
 
 ---
 
